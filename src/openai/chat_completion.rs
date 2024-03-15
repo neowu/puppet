@@ -13,12 +13,37 @@ pub struct ChatRequest {
     pub frequency_penalty: f32,
 }
 
+impl ChatRequest {
+    pub fn new() -> ChatRequest {
+        ChatRequest {
+            messages: vec![],
+            temperature: 0.8,
+            top_p: 0.8,
+            stream: true,
+            stop: None,
+            max_tokens: 800,
+            presence_penalty: 0.0,
+            frequency_penalty: 0.0,
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct ChatRequestMessage {
     pub role: Role,
     pub content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+}
+
+impl ChatRequestMessage {
+    pub fn new(role: Role, message: &str) -> ChatRequestMessage {
+        ChatRequestMessage {
+            role,
+            content: Some(message.to_string()),
+            name: None,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
