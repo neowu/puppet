@@ -12,6 +12,10 @@ pub struct ChatRequest {
     pub max_tokens: i32,
     pub presence_penalty: f32,
     pub frequency_penalty: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<Tool>>,
 }
 
 impl ChatRequest {
@@ -25,6 +29,8 @@ impl ChatRequest {
             max_tokens: 800,
             presence_penalty: 0.0,
             frequency_penalty: 0.0,
+            tool_choice: None,
+            tools: None,
         }
     }
 }
@@ -45,6 +51,19 @@ impl ChatRequestMessage {
             name: None,
         }
     }
+}
+
+#[derive(Debug, Serialize)]
+pub struct Tool {
+    pub r#type: String,
+    pub function: Function,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Function {
+    pub name: String,
+    pub description: String,
+    pub parameters: serde_json::Value,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -79,4 +98,17 @@ pub struct ChatCompletionChoice {
 #[derive(Debug, Deserialize)]
 pub struct ChatResponseMessage {
     pub content: Option<String>,
+    pub tool_calls: Option<Vec<ToolCall>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ToolCall {
+    pub id: Option<String>,
+    pub function: FunctionCall,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FunctionCall {
+    pub name: Option<String>,
+    pub arguments: String,
 }

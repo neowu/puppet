@@ -5,12 +5,18 @@ use std::io::Write;
 use std::path::Path;
 
 use clap::Args;
+use rand::Rng;
+use serde::Deserialize;
+use serde::Serialize;
+use serde_json::json;
 
 use crate::chatgpt;
 use crate::chatgpt::ChatGPT;
 use crate::chatgpt::ChatHandler;
 use crate::config;
 use crate::openai;
+use crate::openai::chat_completion::Function;
+use crate::util::json::from_json;
 
 #[derive(Args)]
 #[command(about = "chat")]
@@ -37,6 +43,17 @@ impl ChatHandler for ConsoleHandler {
     }
 }
 
+#[derive(Deserialize, Debug)]
+struct GetRandomNumberRequest {
+    pub max: i32,
+}
+
+#[derive(Serialize, Debug)]
+struct GetRandomNumberResponse {
+    pub success: bool,
+    pub result: i32,
+}
+
 impl Chat {
     pub async fn execute(&self) -> Result<(), Box<dyn Error>> {
         let config = config::load(Path::new(&self.conf))?;
@@ -46,8 +63,35 @@ impl Chat {
             api_key: bot.api_key.to_string(),
             model: bot.params.get("model").unwrap().to_string(),
         };
-        let chatgpt = ChatGPT::new(client, Option::None);
+        let mut chatgpt = ChatGPT::new(client, Option::None);
+        chatgpt.register_function(
+            Function {
+                name: "get_random_number".to_string(),
+                description: "generate random number".to_string(),
+                parameters: json!({
+                    "type": "object",
+                    "properties": {
+                      "max": {
+                        "type": "number",
+                        "description": "max of value"
+                      },
+                    },
+                    "required": ["max"]
+                }),
+            },
+            Box::new(|request_json| {
+                let request: GetRandomNumberRequest = from_json(&request_json).unwrap();
+                let mut rng = rand::thread_rng();
+                let response = GetRandomNumberResponse {
+                    success: true,
+                    result: rng.gen_range(0..request.max),
+                };
+                serde_json::to_string(&response).unwrap()
+            }),
+        );
+
         let handler = ConsoleHandler {};
+
         loop {
             print_flush("> ")?;
 

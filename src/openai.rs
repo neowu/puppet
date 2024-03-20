@@ -57,6 +57,7 @@ impl Client {
         let model = &self.model;
         let url = format!("{endpoint}/openai/deployments/{model}/chat/completions?api-version=2024-02-15-preview");
         let body = serde_json::to_string(request)?;
+
         let request = http_client()
             .post(url)
             .header("Content-Type", "application/json")

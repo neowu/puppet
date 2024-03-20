@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::error::Error;
+use std::mem;
 
 use futures::stream::StreamExt;
 use reqwest_eventsource::Event;
@@ -8,14 +9,18 @@ use tokio::sync::mpsc::channel;
 use crate::openai::chat_completion::ChatRequest;
 use crate::openai::chat_completion::ChatRequestMessage;
 use crate::openai::chat_completion::ChatResponse;
+use crate::openai::chat_completion::Function;
+use crate::openai::chat_completion::FunctionCall;
 use crate::openai::chat_completion::Role;
+use crate::openai::chat_completion::Tool;
 use crate::openai::Client;
 use crate::util::json;
 
 pub struct ChatGPT {
     pub client: Client,
     pub messages: Vec<ChatRequestMessage>,
-    pub functions: HashMap<String, Box<dyn Fn(String) -> String>>,
+    tools: Vec<Tool>,
+    function_implementations: HashMap<String, Box<dyn Fn(String) -> String>>,
 }
 
 pub trait ChatHandler {
@@ -28,12 +33,18 @@ pub enum ChatEvent {
     End,
 }
 
+enum InternalEvent {
+    Event(ChatEvent),
+    FunctionCall { name: Option<String>, arguments: String },
+}
+
 impl ChatGPT {
     pub fn new(client: Client, system_message: Option<String>) -> Self {
         let mut chatgpt = ChatGPT {
             client,
             messages: vec![],
-            functions: HashMap::new(),
+            tools: vec![],
+            function_implementations: HashMap::new(),
         };
         if let Some(message) = system_message {
             chatgpt.messages.push(ChatRequestMessage::new(Role::System, &message));
@@ -41,9 +52,46 @@ impl ChatGPT {
         chatgpt
     }
 
-    pub async fn chat(&self, message: &str, handler: &dyn ChatHandler) -> Result<(), Box<dyn Error>> {
+    pub fn register_function(&mut self, function: Function, implementation: Box<dyn Fn(String) -> String>) {
+        let name = function.name.to_string();
+        self.tools.push(Tool {
+            r#type: "function".to_string(),
+            function,
+        });
+        self.function_implementations.insert(name, implementation);
+    }
+
+    pub async fn chat(&mut self, message: &str, handler: &dyn ChatHandler) -> Result<(), Box<dyn Error>> {
+        let function_call = self.send_request(ChatRequestMessage::new(Role::User, message), handler).await;
+        if let Ok(Some(function_call)) = function_call {
+            let name = function_call.name.unwrap();
+            let function = self.function_implementations.get(&name).unwrap();
+            let result = function(function_call.arguments);
+            dbg!(&result);
+            self.send_request(
+                ChatRequestMessage {
+                    role: Role::Function,
+                    content: Some(result),
+                    name: Some(name),
+                },
+                handler,
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    async fn send_request(&mut self, message: ChatRequestMessage, handler: &dyn ChatHandler) -> Result<Option<FunctionCall>, Box<dyn Error>> {
         let mut request = ChatRequest::new();
-        request.messages.push(ChatRequestMessage::new(Role::User, message));
+        request.messages = mem::take(&mut self.messages);
+
+        request.messages.push(message);
+
+        if !self.function_implementations.is_empty() {
+            request.tool_choice = Some("auto".to_string());
+            request.tools = Some(mem::take(&mut self.tools));
+        }
+
         let mut source = self.client.post_sse(&request).await?;
         let (tx, mut rx) = channel(64);
         tokio::spawn(async move {
@@ -55,21 +103,36 @@ impl ChatGPT {
 
                         if data == "[DONE]" {
                             source.close();
-                            tx.send(ChatEvent::End).await.unwrap();
+                            tx.send(InternalEvent::Event(ChatEvent::End)).await.unwrap();
                             break;
                         }
 
+                        dbg!(&data);
                         let response: ChatResponse = json::from_json(&data).unwrap();
                         if response.choices.is_empty() {
                             continue;
                         }
-                        let content = response.choices.first().unwrap().delta.as_ref().unwrap();
-                        if let Some(value) = content.content.as_ref() {
-                            tx.send(ChatEvent::Delta(value.to_string())).await.unwrap();
+
+                        let choice = response.choices.first().unwrap();
+                        let delta = choice.delta.as_ref().unwrap();
+
+                        if let Some(tool_calls) = delta.tool_calls.as_ref() {
+                            let call = tool_calls.first().unwrap();
+                            tx.send(InternalEvent::FunctionCall {
+                                name: call.function.name.clone(),
+                                arguments: call.function.arguments.to_string(),
+                            })
+                            .await
+                            .unwrap();
+                            continue;
+                        }
+
+                        if let Some(value) = delta.content.as_ref() {
+                            tx.send(InternalEvent::Event(ChatEvent::Delta(value.to_string()))).await.unwrap();
                         }
                     }
                     Err(err) => {
-                        tx.send(ChatEvent::Error(err.to_string())).await.unwrap();
+                        tx.send(InternalEvent::Event(ChatEvent::Error(err.to_string()))).await.unwrap();
                         source.close();
                     }
                 }
@@ -77,14 +140,40 @@ impl ChatGPT {
         });
 
         let mut assistant_message = String::new();
+        let mut function_name: Option<String> = None;
+        let mut function_arguments = String::new();
         while let Some(event) = rx.recv().await {
-            handler.on_event(&event);
-            if let ChatEvent::Delta(data) = event {
-                assistant_message.push_str(&data);
+            match event {
+                InternalEvent::Event(event) => {
+                    handler.on_event(&event);
+                    if let ChatEvent::Delta(data) = event {
+                        assistant_message.push_str(&data);
+                    }
+                }
+                InternalEvent::FunctionCall { name, arguments } => {
+                    if let Some(name) = name {
+                        function_name = Some(name);
+                    }
+                    function_arguments.push_str(&arguments);
+                }
             }
         }
-        request.messages.push(ChatRequestMessage::new(Role::Assistant, &assistant_message));
 
-        Ok(())
+        if !assistant_message.is_empty() {
+            request.messages.push(ChatRequestMessage::new(Role::Assistant, &assistant_message));
+        }
+        self.messages = request.messages;
+        if !self.function_implementations.is_empty() {
+            self.tools = request.tools.unwrap();
+        }
+
+        if let Some(function_name) = function_name {
+            return Ok(Some(FunctionCall {
+                name: Some(function_name),
+                arguments: function_arguments,
+            }));
+        }
+
+        Ok(None)
     }
 }
