@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::error::Error;
 use std::mem;
+use std::sync::Arc;
 
 use futures::stream::StreamExt;
 use reqwest_eventsource::Event;
@@ -19,8 +20,10 @@ pub struct ChatGPT {
     pub client: Client,
     pub messages: Vec<ChatRequestMessage>,
     tools: Vec<Tool>,
-    function_implementations: HashMap<String, Box<dyn Fn(String) -> String>>,
+    function_implementations: HashMap<String, Arc<Box<FunctionImplementation>>>,
 }
+
+type FunctionImplementation = dyn Fn(String) -> String + Send + Sync;
 
 pub trait ChatHandler {
     fn on_event(&self, event: &ChatEvent);
@@ -51,26 +54,26 @@ impl ChatGPT {
         chatgpt
     }
 
-    pub fn register_function(&mut self, function: Function, implementation: Box<dyn Fn(String) -> String>) {
+    pub fn register_function(&mut self, function: Function, implementation: Box<FunctionImplementation>) {
         let name = function.name.to_string();
         self.tools.push(Tool {
             r#type: "function".to_string(),
             function,
         });
-        self.function_implementations.insert(name, implementation);
+        self.function_implementations.insert(name, Arc::new(implementation));
     }
 
     pub async fn chat(&mut self, message: &str, handler: &dyn ChatHandler) -> Result<(), Box<dyn Error>> {
         let result = self.send_request(ChatRequestMessage::new(Role::User, message), handler).await;
         if let Ok(Some(InternalEvent::FunctionCall { name, arguments })) = result {
-            let function = self.function_implementations.get(&name).unwrap();
+            let function = self.function_implementations.get(&name).unwrap().clone();
 
-            let result = function(arguments);
+            let result = tokio::spawn(async move { function(arguments) }).await;
 
             self.send_request(
                 ChatRequestMessage {
                     role: Role::Function,
-                    content: Some(result),
+                    content: Some(result.unwrap()),
                     name: Some(name),
                 },
                 handler,
