@@ -1,4 +1,5 @@
-use std::{error::Error, io};
+use std::error::Error;
+use std::io;
 
 use clap::{Args, CommandFactory};
 use clap_complete::{generate, shells::Zsh};

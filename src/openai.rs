@@ -14,13 +14,14 @@ fn http_client() -> &'static reqwest::Client {
     HTTP_CLIENT.get_or_init(reqwest::Client::new)
 }
 
-pub struct Client<'a> {
-    pub endpoint: &'a str,
-    pub api_key: &'a str,
-    pub model: &'a str,
+pub struct Client {
+    pub endpoint: String,
+    pub api_key: String,
+    pub model: String,
 }
 
-impl Client<'_> {
+impl Client {
+    #[allow(dead_code)]
     async fn post<Request, Response>(&self, url: &str, request: &Request) -> Result<Response, Box<dyn Error>>
     where
         Request: Serialize,
@@ -29,7 +30,7 @@ impl Client<'_> {
         let body = serde_json::to_string(request)?;
         let response = http_client()
             .post(url)
-            .header("api-key", self.api_key)
+            .header("api-key", &self.api_key)
             .header("Content-Type", "application/json")
             .header("Accept", "application/json")
             .body(body)
@@ -59,7 +60,7 @@ impl Client<'_> {
         let request = http_client()
             .post(url)
             .header("Content-Type", "application/json")
-            .header("api-key", self.api_key)
+            .header("api-key", &self.api_key)
             .body(body);
 
         Ok(EventSource::new(request).unwrap())

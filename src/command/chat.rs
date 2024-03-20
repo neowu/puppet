@@ -6,15 +6,11 @@ use std::path::Path;
 
 use clap::Args;
 
+use crate::chatgpt;
+use crate::chatgpt::ChatGPT;
+use crate::chatgpt::ChatHandler;
 use crate::config;
 use crate::openai;
-use crate::openai::chat_completion::ChatRequest;
-use crate::openai::chat_completion::ChatRequestMessage;
-use crate::openai::chat_completion::ChatResponse;
-use crate::openai::chat_completion::Role;
-use crate::util::json;
-use futures::stream::StreamExt;
-use reqwest_eventsource::Event;
 
 #[derive(Args)]
 #[command(about = "chat")]
@@ -23,11 +19,35 @@ pub struct Chat {
     conf: String,
 }
 
+struct ConsoleHandler;
+
+impl ChatHandler for ConsoleHandler {
+    fn on_event(&self, event: &chatgpt::ChatEvent) {
+        match event {
+            chatgpt::ChatEvent::Delta(data) => {
+                print_flush(data).unwrap();
+            }
+            chatgpt::ChatEvent::Error(error) => {
+                println!("Error: {}", error);
+            }
+            chatgpt::ChatEvent::End => {
+                println!();
+            }
+        }
+    }
+}
+
 impl Chat {
     pub async fn execute(&self) -> Result<(), Box<dyn Error>> {
         let config = config::load(Path::new(&self.conf))?;
-
-        let mut request = ChatRequest::new();
+        let bot = config.bots.get("azure").unwrap();
+        let client = openai::Client {
+            endpoint: bot.endpoint.to_string(),
+            api_key: bot.api_key.to_string(),
+            model: bot.params.get("model").unwrap().to_string(),
+        };
+        let chatgpt = ChatGPT::new(client, Option::None);
+        let handler = ConsoleHandler {};
         loop {
             print_flush("> ")?;
 
@@ -36,47 +56,7 @@ impl Chat {
                 break;
             }
 
-            request.messages.push(ChatRequestMessage::new(Role::User, &line));
-
-            let bot = config.bots.get("azure").unwrap();
-            let client = openai::Client {
-                endpoint: &bot.endpoint,
-                api_key: &bot.api_key,
-                model: bot.params.get("model").unwrap(),
-            };
-            let mut source = client.post_sse(&request).await?;
-
-            let mut assistant_message = String::new();
-            while let Some(event) = source.next().await {
-                match event {
-                    Ok(Event::Open) => {}
-                    Ok(Event::Message(message)) => {
-                        let data = message.data;
-
-                        if data == "[DONE]" {
-                            source.close();
-                            println!();
-                            break;
-                        }
-
-                        let response: ChatResponse = json::from_json(&data)?;
-                        if response.choices.is_empty() {
-                            continue;
-                        }
-                        let content = response.choices.first().unwrap().delta.as_ref().unwrap();
-                        if let Some(value) = content.content.as_ref() {
-                            assistant_message.push_str(value);
-                            print_flush(value)?;
-                        }
-                    }
-                    Err(err) => {
-                        println!("Error: {}", err);
-                        source.close();
-                    }
-                }
-            }
-
-            request.messages.push(ChatRequestMessage::new(Role::Assistant, &assistant_message));
+            chatgpt.chat(&line, &handler).await?;
         }
 
         Ok(())

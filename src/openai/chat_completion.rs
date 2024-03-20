@@ -1,4 +1,5 @@
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 
 #[derive(Debug, Serialize)]
 pub struct ChatRequest {
@@ -14,7 +15,7 @@ pub struct ChatRequest {
 }
 
 impl ChatRequest {
-    pub fn new() -> ChatRequest {
+    pub fn new() -> Self {
         ChatRequest {
             messages: vec![],
             temperature: 0.8,
@@ -37,7 +38,7 @@ pub struct ChatRequestMessage {
 }
 
 impl ChatRequestMessage {
-    pub fn new(role: Role, message: &str) -> ChatRequestMessage {
+    pub fn new(role: Role, message: &str) -> Self {
         ChatRequestMessage {
             role,
             content: Some(message.to_string()),

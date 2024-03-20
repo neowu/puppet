@@ -4,6 +4,7 @@ use command::chat::Chat;
 use command::generate_zsh_completion::GenerateZshCompletion;
 use std::error::Error;
 
+mod chatgpt;
 mod command;
 mod config;
 mod openai;
