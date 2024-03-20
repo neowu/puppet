@@ -10,7 +10,6 @@ use crate::openai::chat_completion::ChatRequest;
 use crate::openai::chat_completion::ChatRequestMessage;
 use crate::openai::chat_completion::ChatResponse;
 use crate::openai::chat_completion::Function;
-use crate::openai::chat_completion::FunctionCall;
 use crate::openai::chat_completion::Role;
 use crate::openai::chat_completion::Tool;
 use crate::openai::Client;
@@ -35,7 +34,7 @@ pub enum ChatEvent {
 
 enum InternalEvent {
     Event(ChatEvent),
-    FunctionCall { name: Option<String>, arguments: String },
+    FunctionCall { name: String, arguments: String },
 }
 
 impl ChatGPT {
@@ -62,12 +61,12 @@ impl ChatGPT {
     }
 
     pub async fn chat(&mut self, message: &str, handler: &dyn ChatHandler) -> Result<(), Box<dyn Error>> {
-        let function_call = self.send_request(ChatRequestMessage::new(Role::User, message), handler).await;
-        if let Ok(Some(function_call)) = function_call {
-            let name = function_call.name.unwrap();
+        let result = self.send_request(ChatRequestMessage::new(Role::User, message), handler).await;
+        if let Ok(Some(InternalEvent::FunctionCall { name, arguments })) = result {
             let function = self.function_implementations.get(&name).unwrap();
-            let result = function(function_call.arguments);
-            dbg!(&result);
+
+            let result = function(arguments);
+
             self.send_request(
                 ChatRequestMessage {
                     role: Role::Function,
@@ -81,7 +80,7 @@ impl ChatGPT {
         Ok(())
     }
 
-    async fn send_request(&mut self, message: ChatRequestMessage, handler: &dyn ChatHandler) -> Result<Option<FunctionCall>, Box<dyn Error>> {
+    async fn send_request(&mut self, message: ChatRequestMessage, handler: &dyn ChatHandler) -> Result<Option<InternalEvent>, Box<dyn Error>> {
         let mut request = ChatRequest::new();
         request.messages = mem::take(&mut self.messages);
 
@@ -95,6 +94,8 @@ impl ChatGPT {
         let mut source = self.client.post_sse(&request).await?;
         let (tx, mut rx) = channel(64);
         tokio::spawn(async move {
+            let mut function_name: Option<String> = None;
+            let mut function_arguments = String::new();
             while let Some(event) = source.next().await {
                 match event {
                     Ok(Event::Open) => {}
@@ -103,11 +104,12 @@ impl ChatGPT {
 
                         if data == "[DONE]" {
                             source.close();
-                            tx.send(InternalEvent::Event(ChatEvent::End)).await.unwrap();
+                            if function_name.is_none() {
+                                tx.send(InternalEvent::Event(ChatEvent::End)).await.unwrap();
+                            }
                             break;
                         }
 
-                        dbg!(&data);
                         let response: ChatResponse = json::from_json(&data).unwrap();
                         if response.choices.is_empty() {
                             continue;
@@ -118,16 +120,11 @@ impl ChatGPT {
 
                         if let Some(tool_calls) = delta.tool_calls.as_ref() {
                             let call = tool_calls.first().unwrap();
-                            tx.send(InternalEvent::FunctionCall {
-                                name: call.function.name.clone(),
-                                arguments: call.function.arguments.to_string(),
-                            })
-                            .await
-                            .unwrap();
-                            continue;
-                        }
-
-                        if let Some(value) = delta.content.as_ref() {
+                            if let Some(name) = &call.function.name {
+                                function_name = Some(name.to_string());
+                            }
+                            function_arguments.push_str(&call.function.arguments);
+                        } else if let Some(value) = delta.content.as_ref() {
                             tx.send(InternalEvent::Event(ChatEvent::Delta(value.to_string()))).await.unwrap();
                         }
                     }
@@ -136,6 +133,14 @@ impl ChatGPT {
                         source.close();
                     }
                 }
+            }
+            if let Some(function_name) = function_name {
+                tx.send(InternalEvent::FunctionCall {
+                    name: function_name,
+                    arguments: function_arguments,
+                })
+                .await
+                .unwrap();
             }
         });
 
@@ -151,9 +156,7 @@ impl ChatGPT {
                     }
                 }
                 InternalEvent::FunctionCall { name, arguments } => {
-                    if let Some(name) = name {
-                        function_name = Some(name);
-                    }
+                    function_name = Some(name);
                     function_arguments.push_str(&arguments);
                 }
             }
@@ -168,8 +171,8 @@ impl ChatGPT {
         }
 
         if let Some(function_name) = function_name {
-            return Ok(Some(FunctionCall {
-                name: Some(function_name),
+            return Ok(Some(InternalEvent::FunctionCall {
+                name: function_name,
                 arguments: function_arguments,
             }));
         }
