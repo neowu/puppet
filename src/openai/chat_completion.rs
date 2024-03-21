@@ -51,6 +51,14 @@ impl ChatRequestMessage {
             name: None,
         }
     }
+
+    pub fn new_function(name: String, result: String) -> Self {
+        ChatRequestMessage {
+            role: Role::Function,
+            content: Some(result),
+            name: Some(name),
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]

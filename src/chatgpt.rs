@@ -66,35 +66,18 @@ impl ChatGPT {
     pub async fn chat(&mut self, message: &str, handler: &dyn ChatHandler) -> Result<(), Box<dyn Error>> {
         let result = self.send_request(ChatRequestMessage::new(Role::User, message), handler).await;
         if let Ok(Some(InternalEvent::FunctionCall { name, arguments })) = result {
-            let function = self.function_implementations.get(&name).unwrap().clone();
+            let function = Arc::clone(self.function_implementations.get(&name).unwrap());
 
-            let result = tokio::spawn(async move { function(arguments) }).await;
+            let result = tokio::spawn(async move { function(arguments) }).await?;
 
-            self.send_request(
-                ChatRequestMessage {
-                    role: Role::Function,
-                    content: Some(result.unwrap()),
-                    name: Some(name),
-                },
-                handler,
-            )
-            .await?;
+            self.send_request(ChatRequestMessage::new_function(name, result), handler).await?;
         }
         Ok(())
     }
 
     async fn send_request(&mut self, message: ChatRequestMessage, handler: &dyn ChatHandler) -> Result<Option<InternalEvent>, Box<dyn Error>> {
-        let mut request = ChatRequest::new();
-        request.messages = mem::take(&mut self.messages);
+        let mut source = self.post_sse(message).await?;
 
-        request.messages.push(message);
-
-        if !self.function_implementations.is_empty() {
-            request.tool_choice = Some("auto".to_string());
-            request.tools = Some(mem::take(&mut self.tools));
-        }
-
-        let mut source = self.client.post_sse(&request).await?;
         let (tx, mut rx) = channel(64);
         tokio::spawn(async move {
             let mut function_name: Option<String> = None;
@@ -166,11 +149,7 @@ impl ChatGPT {
         }
 
         if !assistant_message.is_empty() {
-            request.messages.push(ChatRequestMessage::new(Role::Assistant, &assistant_message));
-        }
-        self.messages = request.messages;
-        if !self.function_implementations.is_empty() {
-            self.tools = request.tools.unwrap();
+            self.messages.push(ChatRequestMessage::new(Role::Assistant, &assistant_message));
         }
 
         if let Some(function_name) = function_name {
@@ -181,5 +160,21 @@ impl ChatGPT {
         }
 
         Ok(None)
+    }
+
+    async fn post_sse(&mut self, message: ChatRequestMessage) -> Result<reqwest_eventsource::EventSource, Box<dyn Error>> {
+        let mut request = ChatRequest::new();
+        request.messages = mem::take(&mut self.messages);
+        request.messages.push(message);
+        if !self.function_implementations.is_empty() {
+            request.tool_choice = Some("auto".to_string());
+            request.tools = Some(mem::take(&mut self.tools));
+        }
+        let source = self.client.post_sse(&request).await?;
+        self.messages = request.messages;
+        if !self.function_implementations.is_empty() {
+            self.tools = request.tools.unwrap();
+        }
+        Ok(source)
     }
 }
