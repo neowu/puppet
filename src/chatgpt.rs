@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use futures::stream::StreamExt;
 use reqwest_eventsource::Event;
+use reqwest_eventsource::EventSource;
 use tokio::sync::mpsc::channel;
 
 use crate::openai::chat_completion::ChatRequest;
@@ -64,19 +65,19 @@ impl ChatGPT {
     }
 
     pub async fn chat(&mut self, message: &str, handler: &dyn ChatHandler) -> Result<(), Box<dyn Error>> {
-        let result = self.send_request(ChatRequestMessage::new(Role::User, message), handler).await;
+        let result = self.process(ChatRequestMessage::new(Role::User, message), handler).await;
         if let Ok(Some(InternalEvent::FunctionCall { name, arguments })) = result {
             let function = Arc::clone(self.function_implementations.get(&name).unwrap());
 
             let result = tokio::spawn(async move { function(arguments) }).await?;
 
-            self.send_request(ChatRequestMessage::new_function(name, result), handler).await?;
+            self.process(ChatRequestMessage::new_function(name, result), handler).await?;
         }
         Ok(())
     }
 
-    async fn send_request(&mut self, message: ChatRequestMessage, handler: &dyn ChatHandler) -> Result<Option<InternalEvent>, Box<dyn Error>> {
-        let mut source = self.post_sse(message).await?;
+    async fn process(&mut self, message: ChatRequestMessage, handler: &dyn ChatHandler) -> Result<Option<InternalEvent>, Box<dyn Error>> {
+        let mut source = self.call_api(message).await?;
 
         let (tx, mut rx) = channel(64);
         tokio::spawn(async move {
@@ -162,7 +163,7 @@ impl ChatGPT {
         Ok(None)
     }
 
-    async fn post_sse(&mut self, message: ChatRequestMessage) -> Result<reqwest_eventsource::EventSource, Box<dyn Error>> {
+    async fn call_api(&mut self, message: ChatRequestMessage) -> Result<EventSource, Box<dyn Error>> {
         let mut request = ChatRequest::new();
         request.messages = mem::take(&mut self.messages);
         request.messages.push(message);

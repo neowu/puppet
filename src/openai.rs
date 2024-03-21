@@ -1,4 +1,5 @@
 use std::error::Error;
+use std::fmt;
 use std::sync::OnceLock;
 
 use reqwest_eventsource::EventSource;
@@ -6,6 +7,7 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use crate::util::exception::Exception;
+use crate::util::json;
 
 pub mod chat_completion;
 
@@ -51,12 +53,12 @@ impl Client {
 
     pub async fn post_sse<Request>(&self, request: &Request) -> Result<EventSource, Box<dyn Error>>
     where
-        Request: Serialize,
+        Request: Serialize + fmt::Debug,
     {
         let endpoint = &self.endpoint;
         let model = &self.model;
         let url = format!("{endpoint}/openai/deployments/{model}/chat/completions?api-version=2024-02-15-preview");
-        let body = serde_json::to_string(request)?;
+        let body = json::to_json(&request)?;
 
         let request = http_client()
             .post(url)
