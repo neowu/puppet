@@ -8,12 +8,14 @@ use reqwest_eventsource::Event;
 use reqwest_eventsource::EventSource;
 use tokio::sync::mpsc::channel;
 
-use crate::openai::chat_completion::ChatRequest;
-use crate::openai::chat_completion::ChatRequestMessage;
-use crate::openai::chat_completion::ChatResponse;
-use crate::openai::chat_completion::Function;
-use crate::openai::chat_completion::Role;
-use crate::openai::chat_completion::Tool;
+use crate::bot::handler::ChatEvent;
+use crate::bot::handler::ChatHandler;
+use crate::openai::api::ChatRequest;
+use crate::openai::api::ChatRequestMessage;
+use crate::openai::api::ChatResponse;
+use crate::openai::api::Function;
+use crate::openai::api::Role;
+use crate::openai::api::Tool;
 use crate::openai::Client;
 use crate::util::json;
 
@@ -25,16 +27,6 @@ pub struct ChatGPT {
 }
 
 type FunctionImplementation = dyn Fn(String) -> String + Send + Sync;
-
-pub trait ChatHandler {
-    fn on_event(&self, event: &ChatEvent);
-}
-
-pub enum ChatEvent {
-    Delta(String),
-    Error(String),
-    End,
-}
 
 enum InternalEvent {
     Event(ChatEvent),

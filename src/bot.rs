@@ -7,6 +7,7 @@ use crate::util::json;
 use self::config::Config;
 
 pub mod config;
+pub mod handler;
 
 pub fn load(path: &Path) -> Result<Config, Box<dyn Error>> {
     println!("load config, path={}", path.to_string_lossy());

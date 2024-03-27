@@ -20,6 +20,7 @@
     },
     "peacock.color": "#B48EAD",
     "cSpell.words": [
+        "gcloud",
         "openai"
     ]
 }

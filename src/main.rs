@@ -6,8 +6,8 @@ use command::server::Server;
 use std::error::Error;
 
 mod bot;
-mod chatgpt;
 mod command;
+mod gcloud;
 mod openai;
 mod util;
 

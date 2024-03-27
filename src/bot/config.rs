@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
-use crate::chatgpt::ChatGPT;
-use crate::openai;
-use crate::openai::chat_completion::Function;
+use crate::openai::api::Function;
+use crate::openai::chatgpt::ChatGPT;
 use crate::util::json::from_json;
+use crate::{gcloud::vertex::Vertex, openai};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
@@ -29,6 +29,21 @@ impl Config {
         }
 
         panic!("bot type must be azure, name={name}");
+    }
+
+    pub fn create_vertex(&self, name: &str) -> Vertex {
+        let bot = self.bots.get(name).unwrap();
+
+        if let BotType::GCloud = bot.r#type {
+            return Vertex::new(
+                bot.endpoint.to_string(),
+                bot.params.get("project").unwrap().to_string(),
+                bot.params.get("location").unwrap().to_string(),
+                bot.params.get("model").unwrap().to_string(),
+            );
+        }
+
+        panic!("bot type must be gcloud, name={name}");
     }
 }
 

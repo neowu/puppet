@@ -7,8 +7,8 @@ use std::path::Path;
 use clap::Args;
 
 use crate::bot;
-use crate::chatgpt;
-use crate::chatgpt::ChatHandler;
+use crate::bot::handler::ChatEvent;
+use crate::bot::handler::ChatHandler;
 
 #[derive(Args)]
 #[command(about = "chat")]
@@ -20,15 +20,15 @@ pub struct Chat {
 struct ConsoleHandler;
 
 impl ChatHandler for ConsoleHandler {
-    fn on_event(&self, event: &chatgpt::ChatEvent) {
+    fn on_event(&self, event: &ChatEvent) {
         match event {
-            chatgpt::ChatEvent::Delta(data) => {
+            ChatEvent::Delta(data) => {
                 print_flush(data).unwrap();
             }
-            chatgpt::ChatEvent::Error(error) => {
+            ChatEvent::Error(error) => {
                 println!("Error: {}", error);
             }
-            chatgpt::ChatEvent::End => {
+            ChatEvent::End => {
                 println!();
             }
         }
@@ -38,10 +38,10 @@ impl ChatHandler for ConsoleHandler {
 impl Chat {
     pub async fn execute(&self) -> Result<(), Box<dyn Error>> {
         let config = bot::load(Path::new(&self.conf))?;
-        let mut chatgpt = config.create_chatgpt("gpt4");
+        // call_chatgpt(config).await?;
 
+        let mut vertex = config.create_vertex("gemini");
         let handler = ConsoleHandler {};
-
         loop {
             print_flush("> ")?;
 
@@ -50,11 +50,27 @@ impl Chat {
                 break;
             }
 
-            chatgpt.chat(&line, &handler).await?;
+            vertex.chat(&line, &handler).await?;
         }
 
         Ok(())
     }
+}
+
+async fn call_chatgpt(config: bot::config::Config) -> Result<(), Box<dyn Error>> {
+    let mut chatgpt = config.create_chatgpt("gpt4");
+    let handler = ConsoleHandler {};
+    loop {
+        print_flush("> ")?;
+
+        let line = read_line()?;
+        if line == "/quit" {
+            break;
+        }
+
+        chatgpt.chat(&line, &handler).await?;
+    }
+    Ok(())
 }
 
 fn read_line() -> Result<String, Box<dyn Error>> {
