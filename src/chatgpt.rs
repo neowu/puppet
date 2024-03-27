@@ -1,6 +1,6 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::error::Error;
-use std::mem;
 use std::sync::Arc;
 
 use futures::stream::StreamExt;
@@ -164,18 +164,21 @@ impl ChatGPT {
     }
 
     async fn call_api(&mut self, message: ChatRequestMessage) -> Result<EventSource, Box<dyn Error>> {
-        let mut request = ChatRequest::new();
-        request.messages = mem::take(&mut self.messages);
-        request.messages.push(message);
-        if !self.function_implementations.is_empty() {
-            request.tool_choice = Some("auto".to_string());
-            request.tools = Some(mem::take(&mut self.tools));
-        }
+        let has_function = !self.function_implementations.is_empty();
+        self.messages.push(message);
+        let request = ChatRequest {
+            messages: Cow::from(&self.messages),
+            temperature: 0.8,
+            top_p: 0.8,
+            stream: true,
+            stop: None,
+            max_tokens: 800,
+            presence_penalty: 0.0,
+            frequency_penalty: 0.0,
+            tool_choice: has_function.then(|| "auto".to_string()),
+            tools: has_function.then(|| Cow::from(&self.tools)),
+        };
         let source = self.client.post_sse(&request).await?;
-        self.messages = request.messages;
-        if !self.function_implementations.is_empty() {
-            self.tools = request.tools.unwrap();
-        }
         Ok(source)
     }
 }

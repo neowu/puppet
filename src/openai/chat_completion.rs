@@ -1,9 +1,12 @@
+use std::borrow::Cow;
+
 use serde::Deserialize;
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
-pub struct ChatRequest {
-    pub messages: Vec<ChatRequestMessage>,
+pub struct ChatRequest<'a> {
+    #[serde(borrow)]
+    pub messages: Cow<'a, [ChatRequestMessage]>,
     pub temperature: f32,
     pub top_p: f32,
     pub stream: bool,
@@ -15,27 +18,10 @@ pub struct ChatRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tools: Option<Vec<Tool>>,
+    pub tools: Option<Cow<'a, [Tool]>>,
 }
 
-impl ChatRequest {
-    pub fn new() -> Self {
-        ChatRequest {
-            messages: vec![],
-            temperature: 0.8,
-            top_p: 0.8,
-            stream: true,
-            stop: None,
-            max_tokens: 800,
-            presence_penalty: 0.0,
-            frequency_penalty: 0.0,
-            tool_choice: None,
-            tools: None,
-        }
-    }
-}
-
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct ChatRequestMessage {
     pub role: Role,
     pub content: Option<String>,
@@ -61,20 +47,20 @@ impl ChatRequestMessage {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct Tool {
     pub r#type: String,
     pub function: Function,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct Function {
     pub name: String,
     pub description: String,
     pub parameters: serde_json::Value,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum Role {
     #[serde(rename = "user")]
     User,
