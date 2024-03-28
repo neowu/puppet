@@ -5,6 +5,7 @@ use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
 
+use futures::future::join_all;
 use futures::stream::StreamExt;
 use reqwest_eventsource::Event;
 use reqwest_eventsource::EventSource;
@@ -76,12 +77,19 @@ impl ChatGPT {
         self.messages.push(ChatRequestMessage::new_message(Role::User, message));
         let result = self.process(handler).await;
         if let Ok(Some(InternalEvent::FunctionCall(calls))) = result {
+            let mut handles = vec![];
+
             for (_, (id, name, args)) in calls {
                 let function = Arc::clone(self.function_implementations.get(&name).unwrap());
-                let result = tokio::spawn(async move { function(json::from_json(&args).unwrap()) }).await?;
-                let function_message = ChatRequestMessage::new_function_response(id, json::to_json(&result)?);
+                handles.push(tokio::spawn(async move { (id, function(json::from_json(&args).unwrap())) }));
+            }
+            let results = join_all(handles).await;
+            for result in results {
+                let result = result?;
+                let function_message = ChatRequestMessage::new_function_response(result.0, json::to_json(&result.1)?);
                 self.messages.push(function_message);
             }
+
             self.process(handler).await?;
         }
         Ok(())
