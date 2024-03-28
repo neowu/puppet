@@ -27,9 +27,7 @@ pub struct Server {}
 
 impl Server {
     pub async fn execute(&self) -> Result<(), Box<dyn Error>> {
-        let app = Router::new()
-        .route("/", routing::get(root))
-        .route("/ws", routing::get(ws_handler));
+        let app = Router::new().route("/", routing::get(root)).route("/ws", routing::get(ws_handler));
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:3000").await?;
         info!("server started");

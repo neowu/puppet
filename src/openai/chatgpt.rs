@@ -1,11 +1,13 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::error::Error;
+use std::fmt;
 use std::sync::Arc;
 
 use futures::stream::StreamExt;
 use reqwest_eventsource::Event;
 use reqwest_eventsource::EventSource;
+use serde::Serialize;
 use tokio::sync::mpsc::channel;
 
 use crate::bot::handler::ChatEvent;
@@ -16,12 +18,14 @@ use crate::openai::api::ChatResponse;
 use crate::openai::api::Function;
 use crate::openai::api::Role;
 use crate::openai::api::Tool;
-use crate::openai::Client;
+use crate::util::http_client;
 use crate::util::json;
 
 pub struct ChatGPT {
-    pub client: Client,
-    pub messages: Vec<ChatRequestMessage>,
+    pub endpoint: String,
+    pub api_key: String,
+    pub model: String,
+    messages: Vec<ChatRequestMessage>,
     tools: Vec<Tool>,
     function_implementations: HashMap<String, Arc<Box<FunctionImplementation>>>,
 }
@@ -34,9 +38,11 @@ enum InternalEvent {
 }
 
 impl ChatGPT {
-    pub fn new(client: Client, system_message: Option<String>) -> Self {
+    pub fn new(endpoint: String, api_key: String, model: String, system_message: Option<String>) -> Self {
         let mut chatgpt = ChatGPT {
-            client,
+            endpoint,
+            api_key,
+            model,
             messages: vec![],
             tools: vec![],
             function_implementations: HashMap::new(),
@@ -170,7 +176,25 @@ impl ChatGPT {
             tool_choice: has_function.then(|| "auto".to_string()),
             tools: has_function.then(|| Cow::from(&self.tools)),
         };
-        let source = self.client.post_sse(&request).await?;
+        let source = self.post_sse(&request).await?;
         Ok(source)
+    }
+
+    async fn post_sse<Request>(&self, request: &Request) -> Result<EventSource, Box<dyn Error>>
+    where
+        Request: Serialize + fmt::Debug,
+    {
+        let endpoint = &self.endpoint;
+        let model = &self.model;
+        let url = format!("{endpoint}/openai/deployments/{model}/chat/completions?api-version=2024-02-15-preview");
+        let body = json::to_json(&request)?;
+        // dbg!(&body);
+        let request = http_client::http_client()
+            .post(url)
+            .header("Content-Type", "application/json")
+            .header("api-key", &self.api_key)
+            .body(body);
+
+        Ok(EventSource::new(request).unwrap())
     }
 }

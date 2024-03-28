@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 
 #[derive(Debug, Serialize)]
 pub struct StreamGenerateContent<'a> {

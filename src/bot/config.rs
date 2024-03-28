@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 
+use crate::gcloud::vertex::Vertex;
 use crate::openai::api::Function;
 use crate::openai::chatgpt::ChatGPT;
 use crate::util::json::from_json;
-use crate::{gcloud::vertex::Vertex, openai};
 use rand::Rng;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
 
 #[derive(Deserialize, Debug)]
 pub struct Config {
@@ -18,12 +19,12 @@ impl Config {
         let bot = self.bots.get(name).unwrap();
 
         if let BotType::Azure = bot.r#type {
-            let client = openai::Client {
-                endpoint: bot.endpoint.to_string(),
-                api_key: bot.params.get("api_key").unwrap().to_string(),
-                model: bot.params.get("model").unwrap().to_string(),
-            };
-            let mut chatgpt = ChatGPT::new(client, Option::None);
+            let mut chatgpt = ChatGPT::new(
+                bot.endpoint.to_string(),
+                bot.params.get("api_key").unwrap().to_string(),
+                bot.params.get("model").unwrap().to_string(),
+                Option::None,
+            );
             register_function(&mut chatgpt);
             return chatgpt;
         }

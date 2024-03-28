@@ -1,8 +1,10 @@
 use std::error::Error;
 use std::io;
 
-use clap::{Args, CommandFactory};
-use clap_complete::{generate, shells::Zsh};
+use clap::Args;
+use clap::CommandFactory;
+use clap_complete::generate;
+use clap_complete::shells::Zsh;
 
 use crate::Cli;
 

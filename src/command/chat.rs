@@ -15,6 +15,9 @@ use crate::bot::handler::ChatHandler;
 pub struct Chat {
     #[arg(long, help = "conf path")]
     conf: String,
+
+    #[arg(long, help = "bot name")]
+    name: String,
 }
 
 struct ConsoleHandler;
@@ -38,23 +41,31 @@ impl ChatHandler for ConsoleHandler {
 impl Chat {
     pub async fn execute(&self) -> Result<(), Box<dyn Error>> {
         let config = bot::load(Path::new(&self.conf))?;
-        // call_chatgpt(config).await?;
 
-        let mut vertex = config.create_vertex("gemini");
-        let handler = ConsoleHandler {};
-        loop {
-            print_flush("> ")?;
-
-            let line = read_line()?;
-            if line == "/quit" {
-                break;
-            }
-
-            vertex.chat(&line, &handler).await?;
+        if self.name == "gpt" {
+            call_chatgpt(config).await?;
+        } else {
+            call_vertex(config).await?;
         }
 
         Ok(())
     }
+}
+
+async fn call_vertex(config: bot::config::Config) -> Result<(), Box<dyn Error>> {
+    let mut vertex = config.create_vertex("gemini");
+    let handler = ConsoleHandler {};
+    loop {
+        print_flush("> ")?;
+
+        let line = read_line()?;
+        if line == "/quit" {
+            break;
+        }
+
+        vertex.chat(&line, &handler).await?;
+    }
+    Ok(())
 }
 
 async fn call_chatgpt(config: bot::config::Config) -> Result<(), Box<dyn Error>> {

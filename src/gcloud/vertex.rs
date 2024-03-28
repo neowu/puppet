@@ -1,24 +1,35 @@
-use std::borrow::{Borrow, Cow};
-use std::env;
-use std::error::Error;
-
 use futures::StreamExt;
 use reqwest::Response;
 use serde::Serialize;
+use tokio::sync::mpsc::channel;
 
-use crate::bot::handler::{ChatEvent, ChatHandler};
+use std::borrow::Cow;
+use std::env;
+use std::error::Error;
+
+use crate::bot::handler::ChatEvent;
+use crate::bot::handler::ChatHandler;
 use crate::gcloud::api::GenerateContentResponse;
+use crate::util::exception::Exception;
 use crate::util::http_client;
-use crate::util::{exception::Exception, json};
+use crate::util::json;
 
-use super::api::{Content, GenerationConfig, Role, StreamGenerateContent};
+use super::api::Content;
+use super::api::GenerationConfig;
+use super::api::Role;
+use super::api::StreamGenerateContent;
 
 pub struct Vertex {
     pub endpoint: String,
     pub project: String,
     pub location: String,
     pub model: String,
-    pub messages: Vec<Content>,
+    messages: Vec<Content>,
+}
+
+enum InternalEvent {
+    Event(ChatEvent),
+    FunctionCall { name: String, arguments: String },
 }
 
 impl Vertex {
@@ -33,14 +44,62 @@ impl Vertex {
     }
 
     pub async fn chat(&mut self, message: &str, handler: &dyn ChatHandler) -> Result<(), Box<dyn Error>> {
+        let response = self.call_api(message).await?;
+
+        let (tx, mut rx) = channel(64);
+
+        tokio::spawn(async move {
+            let stream = &mut response.bytes_stream();
+
+            let mut buffer = String::new();
+            while let Some(result) = stream.next().await {
+                match result {
+                    Ok(chunk) => {
+                        buffer.push_str(std::str::from_utf8(&chunk).unwrap());
+
+                        if !is_valid_json(&buffer[1..]) {
+                            continue;
+                        }
+
+                        let content: GenerateContentResponse = json::from_json(&buffer[1..]).unwrap();
+                        let delta = content.candidates.first().unwrap().content.parts.first().unwrap().text.as_ref().unwrap();
+                        tx.send(InternalEvent::Event(ChatEvent::Delta(delta.to_string()))).await.unwrap();
+                        buffer.clear();
+                    }
+                    Err(err) => {
+                        tx.send(InternalEvent::Event(ChatEvent::Error(err.to_string()))).await.unwrap();
+                        break;
+                    }
+                }
+            }
+        });
+
+        let mut model_message = String::new();
+        while let Some(event) = rx.recv().await {
+            match event {
+                InternalEvent::Event(event) => {
+                    handler.on_event(&event);
+                    if let ChatEvent::Delta(data) = event {
+                        model_message.push_str(&data);
+                    }
+                }
+                InternalEvent::FunctionCall { name: _, arguments: _ } => {}
+            }
+        }
+        if !model_message.is_empty() {
+            self.messages.push(Content::new(Role::Model, &model_message));
+        }
+        handler.on_event(&ChatEvent::End);
+        Ok(())
+    }
+
+    async fn call_api(&mut self, message: &str) -> Result<Response, Box<dyn Error>> {
         let endpoint = &self.endpoint;
         let project = &self.project;
         let location = &self.location;
         let model = &self.model;
         let url = format!("{endpoint}/v1/projects/{project}/locations/{location}/publishers/google/models/{model}:streamGenerateContent");
-
         self.messages.push(Content::new(Role::User, message));
-
         let request = StreamGenerateContent {
             contents: Cow::from(&self.messages),
             generation_config: GenerationConfig {
@@ -50,36 +109,7 @@ impl Vertex {
             },
         };
         let response = self.post(&url, &request).await?;
-        let stream = &mut response.bytes_stream();
-
-        let mut model_message = String::new();
-        let mut buffer = String::new();
-        while let Some(result) = stream.next().await {
-            match result {
-                Ok(chunk) => {
-                    buffer.push_str(std::str::from_utf8(&chunk).unwrap());
-
-                    if !is_valid_json(&buffer[1..]) {
-                        continue;
-                    }
-
-                    let data: GenerateContentResponse = json::from_json(&buffer[1..])?;
-                    let delta = data.candidates.first().unwrap().content.parts.first().unwrap().text.as_ref().unwrap();
-                    handler.on_event(&ChatEvent::Delta(delta.to_string()));
-                    model_message.push_str(delta);
-                    buffer.clear();
-                }
-                Err(err) => {
-                    handler.on_event(&ChatEvent::Error(err.to_string()));
-                    break;
-                }
-            }
-        }
-        if !model_message.is_empty() {
-            self.messages.push(Content::new(Role::Model, &model_message));
-        }
-        handler.on_event(&ChatEvent::End);
-        Ok(())
+        Ok(response)
     }
 
     async fn post<Request>(&self, url: &str, request: &Request) -> Result<Response, Box<dyn Error>>
