@@ -1,7 +1,10 @@
 use std::borrow::Cow;
+use std::collections::HashMap;
 
 use serde::Deserialize;
 use serde::Serialize;
+
+use crate::bot::Function;
 
 #[derive(Debug, Serialize)]
 pub struct ChatRequest<'a> {
@@ -26,23 +29,49 @@ pub struct ChatRequestMessage {
     pub role: Role,
     pub content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
+    pub tool_call_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCall>>,
 }
 
 impl ChatRequestMessage {
-    pub fn new(role: Role, message: &str) -> Self {
+    pub fn new_message(role: Role, message: &str) -> Self {
         ChatRequestMessage {
             role,
             content: Some(message.to_string()),
-            name: None,
+            tool_call_id: None,
+            tool_calls: None,
         }
     }
 
-    pub fn new_function(name: String, result: String) -> Self {
+    pub fn new_function_response(id: String, result: String) -> Self {
         ChatRequestMessage {
-            role: Role::Function,
+            role: Role::Tool,
             content: Some(result),
-            name: Some(name),
+            tool_call_id: Some(id),
+            tool_calls: None,
+        }
+    }
+
+    pub fn new_function_call(calls: &HashMap<i64, (String, String, String)>) -> ChatRequestMessage {
+        ChatRequestMessage {
+            role: Role::Assistant,
+            content: None,
+            tool_call_id: None,
+            tool_calls: Some(
+                calls
+                    .iter()
+                    .map(|(key, (id, name, arguments))| ToolCall {
+                        index: *key,
+                        id: Some(id.to_string()),
+                        function: FunctionCall {
+                            name: Some(name.to_string()),
+                            arguments: arguments.to_string(),
+                        },
+                        r#type: Some("function".to_string()),
+                    })
+                    .collect(),
+            ),
         }
     }
 }
@@ -53,13 +82,6 @@ pub struct Tool {
     pub function: Function,
 }
 
-#[derive(Debug, Serialize, Clone)]
-pub struct Function {
-    pub name: String,
-    pub description: String,
-    pub parameters: serde_json::Value,
-}
-
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum Role {
     #[serde(rename = "user")]
@@ -68,8 +90,8 @@ pub enum Role {
     System,
     #[serde(rename = "assistant")]
     Assistant,
-    #[serde(rename = "function")]
-    Function,
+    #[serde(rename = "tool")]
+    Tool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -95,13 +117,15 @@ pub struct ChatResponseMessage {
     pub tool_calls: Option<Vec<ToolCall>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ToolCall {
+    pub index: i64,
     pub id: Option<String>,
+    pub r#type: Option<String>,
     pub function: FunctionCall,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FunctionCall {
     pub name: Option<String>,
     pub arguments: String,

@@ -11,7 +11,7 @@ impl Exception {
     pub fn new(message: &str) -> Self {
         Self {
             message: message.to_string(),
-            trace: Backtrace::capture().to_string(),
+            trace: Backtrace::force_capture().to_string(),
         }
     }
 }

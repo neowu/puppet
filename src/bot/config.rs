@@ -1,58 +1,48 @@
 use std::collections::HashMap;
 
+use crate::bot::Bot;
+use crate::bot::Function;
 use crate::gcloud::vertex::Vertex;
-use crate::openai::api::Function;
 use crate::openai::chatgpt::ChatGPT;
-use crate::util::json::from_json;
 use rand::Rng;
 use serde::Deserialize;
-use serde::Serialize;
+use serde_json::json;
 
 #[derive(Deserialize, Debug)]
 pub struct Config {
-    pub bots: HashMap<String, Bot>,
+    pub bots: HashMap<String, BotConfig>,
 }
 
 impl Config {
     // TODO: think about how to make async trait object
-    pub fn create_chatgpt(&self, name: &str) -> ChatGPT {
-        let bot = self.bots.get(name).unwrap();
+    pub fn create(&self, name: &str) -> Box<dyn Bot> {
+        let config = self.bots.get(name).unwrap();
 
-        if let BotType::Azure = bot.r#type {
-            let mut chatgpt = ChatGPT::new(
-                bot.endpoint.to_string(),
-                bot.params.get("api_key").unwrap().to_string(),
-                bot.params.get("model").unwrap().to_string(),
+        let mut bot: Box<dyn Bot> = match config.r#type {
+            BotType::Azure => Box::new(ChatGPT::new(
+                config.endpoint.to_string(),
+                config.params.get("api_key").unwrap().to_string(),
+                config.params.get("model").unwrap().to_string(),
                 Option::None,
-            );
-            register_function(&mut chatgpt);
-            return chatgpt;
-        }
-
-        panic!("bot type must be azure, name={name}");
-    }
-
-    pub fn create_vertex(&self, name: &str) -> Vertex {
-        let bot = self.bots.get(name).unwrap();
-
-        if let BotType::GCloud = bot.r#type {
-            return Vertex::new(
-                bot.endpoint.to_string(),
-                bot.params.get("project").unwrap().to_string(),
-                bot.params.get("location").unwrap().to_string(),
-                bot.params.get("model").unwrap().to_string(),
-            );
-        }
-
-        panic!("bot type must be gcloud, name={name}");
+            )),
+            BotType::GCloud => Box::new(Vertex::new(
+                config.endpoint.to_string(),
+                config.params.get("project").unwrap().to_string(),
+                config.params.get("location").unwrap().to_string(),
+                config.params.get("model").unwrap().to_string(),
+            )),
+        };
+        register_function(config, &mut bot);
+        bot
     }
 }
 
 #[derive(Deserialize, Debug)]
-pub struct Bot {
+pub struct BotConfig {
     pub endpoint: String,
     pub r#type: BotType,
     pub params: HashMap<String, String>,
+    pub functions: Vec<String>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -61,41 +51,34 @@ pub enum BotType {
     GCloud,
 }
 
-fn register_function(chatgpt: &mut ChatGPT) {
-    chatgpt.register_function(
-        Function {
-            name: "get_random_number".to_string(),
-            description: "generate random number".to_string(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {
-                  "max": {
-                    "type": "number",
-                    "description": "max of value"
-                  },
+fn register_function(config: &BotConfig, bot: &mut Box<dyn Bot>) {
+    for function in &config.functions {
+        if let "get_random_number" = function.as_str() {
+            bot.register_function(
+                Function {
+                    name: "get_random_number".to_string(),
+                    description: "generate random number".to_string(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                          "max": {
+                            "type": "number",
+                            "description": "max of value"
+                          },
+                        },
+                        "required": ["max"]
+                    }),
                 },
-                "required": ["max"]
-            }),
-        },
-        Box::new(|request_json| {
-            let request: GetRandomNumberRequest = from_json(&request_json).unwrap();
-            let mut rng = rand::thread_rng();
-            let response = GetRandomNumberResponse {
-                success: true,
-                result: rng.gen_range(0..request.max),
-            };
-            serde_json::to_string(&response).unwrap()
-        }),
-    );
-}
-
-#[derive(Deserialize, Debug)]
-struct GetRandomNumberRequest {
-    pub max: i32,
-}
-
-#[derive(Serialize, Debug)]
-struct GetRandomNumberResponse {
-    pub success: bool,
-    pub result: i32,
+                Box::new(|request| {
+                    let max = request.get("max").unwrap().as_i64().unwrap();
+                    let mut rng = rand::thread_rng();
+                    let result = rng.gen_range(0..max);
+                    json!({
+                        "success": true,
+                        "result": result
+                    })
+                }),
+            );
+        }
+    }
 }
