@@ -68,7 +68,11 @@ impl Vertex {
         let mut result = self.process(Content::new_text(Role::User, message), handler).await?;
 
         while let Some(function_call) = result {
-            let function = Arc::clone(self.function_implementations.get(&function_call.name).unwrap());
+            let function = Arc::clone(
+                self.function_implementations
+                    .get(&function_call.name)
+                    .ok_or(Exception::new(&format!("function not found, name={}", function_call.name)))?,
+            );
 
             let function_response = tokio::spawn(async move { function(function_call.args) }).await?;
 

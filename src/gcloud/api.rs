@@ -35,7 +35,7 @@ impl Content {
 
     pub fn new_function_response(name: &str, response: serde_json::Value) -> Self {
         Self {
-            role: Role::Model,
+            role: Role::User,
             parts: vec![Part {
                 text: None,
                 function_call: None,
