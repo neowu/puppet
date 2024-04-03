@@ -10,8 +10,10 @@ use futures::stream::StreamExt;
 use reqwest_eventsource::Event;
 use reqwest_eventsource::EventSource;
 use serde::Serialize;
+use serde_json::Value;
 use tokio::sync::mpsc::channel;
 use tokio::sync::mpsc::Sender;
+use tokio::task::JoinHandle;
 
 use crate::bot::Bot;
 use crate::bot::ChatEvent;
@@ -23,6 +25,7 @@ use crate::openai::api::ChatRequestMessage;
 use crate::openai::api::ChatResponse;
 use crate::openai::api::Role;
 use crate::openai::api::Tool;
+use crate::util::exception::Exception;
 use crate::util::http_client;
 use crate::util::json;
 
@@ -77,16 +80,22 @@ impl ChatGPT {
         self.messages.push(ChatRequestMessage::new_message(Role::User, message));
         let result = self.process(handler).await;
         if let Ok(Some(InternalEvent::FunctionCall(calls))) = result {
-            let mut handles = vec![];
+            let handles: Result<Vec<JoinHandle<_>>, _> = calls
+                .into_iter()
+                .map(|(_, (id, name, args))| {
+                    let function = Arc::clone(
+                        self.function_implementations
+                            .get(&name)
+                            .ok_or_else(|| Exception::new(&format!("function not found, name={name}")))?,
+                    );
+                    Ok::<JoinHandle<_>, Exception>(tokio::spawn(async move { (id, function(json::from_json(&args).unwrap())) }))
+                })
+                .collect();
 
-            for (_, (id, name, args)) in calls {
-                let function = Arc::clone(self.function_implementations.get(&name).unwrap());
-                handles.push(tokio::spawn(async move { (id, function(json::from_json(&args).unwrap())) }));
-            }
-            let results = join_all(handles).await;
+            let results = join_all(handles?).await;
             for result in results {
                 let result = result?;
-                let function_message = ChatRequestMessage::new_function_response(result.0, json::to_json(&result.1)?);
+                let function_message = ChatRequestMessage::new_function_response(result.0.to_string(), json::to_json(&result.1)?);
                 self.messages.push(function_message);
             }
 
@@ -151,7 +160,7 @@ impl ChatGPT {
     {
         let endpoint = &self.endpoint;
         let model = &self.model;
-        let url = format!("{endpoint}/openai/deployments/{model}/chat/completions?api-version=2024-02-15-preview");
+        let url = format!("{endpoint}/openai/deployments/{model}/chat/completions?api-version=2024-02-01");
         let body = json::to_json(&request)?;
 
         let request = http_client::http_client()
