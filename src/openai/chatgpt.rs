@@ -7,10 +7,10 @@ use std::sync::Arc;
 
 use futures::future::join_all;
 use futures::stream::StreamExt;
+use reqwest_eventsource::CannotCloneRequestError;
 use reqwest_eventsource::Event;
 use reqwest_eventsource::EventSource;
 use serde::Serialize;
-use serde_json::Value;
 use tokio::sync::mpsc::channel;
 use tokio::sync::mpsc::Sender;
 use tokio::task::JoinHandle;
@@ -104,7 +104,7 @@ impl ChatGPT {
         Ok(())
     }
 
-    async fn process(&mut self, handler: &dyn ChatHandler) -> Result<Option<InternalEvent>, Box<dyn Error>> {
+    async fn process(&mut self, handler: &dyn ChatHandler) -> Result<Option<InternalEvent>, Exception> {
         let source = self.call_api().await?;
 
         let (tx, mut rx) = channel(64);
@@ -135,7 +135,7 @@ impl ChatGPT {
         Ok(None)
     }
 
-    async fn call_api(&mut self) -> Result<EventSource, Box<dyn Error>> {
+    async fn call_api(&mut self) -> Result<EventSource, Exception> {
         let has_function = !self.function_implementations.is_empty();
 
         let request = ChatRequest {
@@ -154,7 +154,7 @@ impl ChatGPT {
         Ok(source)
     }
 
-    async fn post_sse<Request>(&self, request: &Request) -> Result<EventSource, Box<dyn Error>>
+    async fn post_sse<Request>(&self, request: &Request) -> Result<EventSource, Exception>
     where
         Request: Serialize + fmt::Debug,
     {
@@ -169,7 +169,13 @@ impl ChatGPT {
             .header("api-key", &self.api_key)
             .body(body);
 
-        Ok(EventSource::new(request).unwrap())
+        Ok(EventSource::new(request)?)
+    }
+}
+
+impl From<CannotCloneRequestError> for Exception {
+    fn from(err: CannotCloneRequestError) -> Self {
+        Exception::new(&err.to_string())
     }
 }
 

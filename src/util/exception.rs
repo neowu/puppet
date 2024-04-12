@@ -18,7 +18,8 @@ impl Exception {
 
 impl fmt::Debug for Exception {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Exception: {}\ntrace:\n{}", self.message, self.trace)
+        write!(f, "Exception: {}\n", self.message);
+        write!(f, "Trace:\n{}", self.trace)
     }
 }
 

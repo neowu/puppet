@@ -131,9 +131,9 @@ impl Vertex {
         let request = StreamGenerateContent {
             contents: Cow::from(&self.messages),
             generation_config: GenerationConfig {
-                temperature: 0.8,
-                top_p: 1.0,
-                max_output_tokens: 800,
+                temperature: 1.0,
+                top_p: 0.95,
+                max_output_tokens: 2048,
             },
             tools: has_function.then(|| Cow::from(&self.tools)),
         };
