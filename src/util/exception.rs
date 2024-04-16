@@ -1,16 +1,37 @@
 use std::backtrace::Backtrace;
 use std::error::Error;
 use std::fmt;
+use std::io;
 
 pub struct Exception {
     message: String,
+    context: Option<String>,
     trace: String,
 }
 
 impl Exception {
     pub fn new(message: &str) -> Self {
+        Exception::create(message.to_string(), None)
+    }
+
+    pub fn from<T>(error: T) -> Self
+    where
+        T: Error + 'static,
+    {
+        Exception::create(error.to_string(), None)
+    }
+
+    pub fn from_with_context<T>(error: T, context: &str) -> Self
+    where
+        T: Error + 'static,
+    {
+        Exception::create(error.to_string(), Some(context.to_string()))
+    }
+
+    fn create(message: String, context: Option<String>) -> Self {
         Self {
-            message: message.to_string(),
+            message,
+            context,
             trace: Backtrace::force_capture().to_string(),
         }
     }
@@ -18,15 +39,26 @@ impl Exception {
 
 impl fmt::Debug for Exception {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Exception: {}\n", self.message);
-        write!(f, "Trace:\n{}", self.trace)
+        write!(
+            f,
+            "Exception: {}\nContext: {}\nTrace:\n{}",
+            self.message,
+            self.context.as_ref().unwrap_or(&"".to_string()),
+            self.trace
+        )
     }
 }
 
 impl fmt::Display for Exception {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.message)
+        fmt::Debug::fmt(self, f)
     }
 }
 
 impl Error for Exception {}
+
+impl From<io::Error> for Exception {
+    fn from(err: io::Error) -> Self {
+        Exception::new(&err.to_string())
+    }
+}

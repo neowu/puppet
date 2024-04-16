@@ -22,5 +22,6 @@
     "cSpell.words": [
         "gcloud",
         "openai"
-    ]
+    ],
+    "rust-analyzer.showUnlinkedFileNotification": false
 }

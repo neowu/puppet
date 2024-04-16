@@ -8,14 +8,12 @@ pub fn from_json<'a, T>(json: &'a str) -> Result<T, Exception>
 where
     T: de::Deserialize<'a>,
 {
-    let result = serde_json::from_str(json);
-    result.map_err(|err| Exception::new(&format!("failed to deserialize json, error={err}, json={json}")))
+    serde_json::from_str(json).map_err(|err| Exception::from_with_context(err, &format!("json={json}")))
 }
 
 pub fn to_json<T>(object: &T) -> Result<String, Exception>
 where
     T: Serialize + fmt::Debug,
 {
-    let result = serde_json::to_string(object);
-    result.map_err(|err| Exception::new(&format!("failed to serialize json, error={err}, object={object:?}")))
+    serde_json::to_string(object).map_err(|err| Exception::from_with_context(err, &format!("object={object:?}")))
 }
