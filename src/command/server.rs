@@ -16,17 +16,18 @@ use futures::SinkExt;
 use futures::StreamExt;
 use hyper::StatusCode;
 use std::borrow::Cow;
-use std::error::Error;
 use std::net::SocketAddr;
 use std::ops::ControlFlow;
 use tracing::info;
+
+use crate::util::exception::Exception;
 
 #[derive(Args)]
 #[command(about = "start server")]
 pub struct Server {}
 
 impl Server {
-    pub async fn execute(&self) -> Result<(), Box<dyn Error>> {
+    pub async fn execute(&self) -> Result<(), Exception> {
         let app = Router::new().route("/", routing::get(root)).route("/ws", routing::get(ws_handler));
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:3000").await?;

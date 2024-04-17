@@ -3,14 +3,12 @@ use reqwest::Response;
 use tokio::sync::mpsc::channel;
 use tokio::sync::mpsc::Sender;
 
-use std::any::Any;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::env;
-use std::error::Error;
+
 use std::sync::Arc;
 
-use crate::bot::Bot;
 use crate::bot::ChatEvent;
 use crate::bot::ChatHandler;
 use crate::bot::Function;
@@ -37,20 +35,6 @@ pub struct Vertex {
     function_implementations: HashMap<String, Arc<Box<FunctionImplementation>>>,
 }
 
-impl Bot for Vertex {
-    fn register_function(&mut self, function: Function, implementation: Box<FunctionImplementation>) {
-        let name = function.name.to_string();
-        self.tools.push(Tool {
-            function_declarations: vec![function],
-        });
-        self.function_implementations.insert(name, Arc::new(implementation));
-    }
-
-    fn as_any(&mut self) -> &mut dyn Any {
-        self
-    }
-}
-
 impl Vertex {
     pub fn new(endpoint: String, project: String, location: String, model: String) -> Self {
         Vertex {
@@ -64,8 +48,19 @@ impl Vertex {
         }
     }
 
-    pub async fn chat(&mut self, message: &str, handler: &dyn ChatHandler) -> Result<(), Box<dyn Error>> {
-        let mut result = self.process(Content::new_text(Role::User, message), handler).await?;
+    pub fn register_function(&mut self, function: Function, implementation: Box<FunctionImplementation>) {
+        let name = function.name.to_string();
+        self.tools.push(Tool {
+            function_declarations: vec![function],
+        });
+        self.function_implementations.insert(name, Arc::new(implementation));
+    }
+
+    pub async fn chat(&mut self, message: &str, handler: &dyn ChatHandler) -> Result<(), Exception> {
+        let mut result = self
+            .process(Content::new_text(Role::User, message), handler)
+            .await
+            .map_err(Exception::from)?;
 
         while let Some(function_call) = result {
             let function = Arc::clone(
@@ -82,7 +77,7 @@ impl Vertex {
         Ok(())
     }
 
-    async fn process(&mut self, content: Content, handler: &dyn ChatHandler) -> Result<Option<FunctionCall>, Box<dyn Error>> {
+    async fn process(&mut self, content: Content, handler: &dyn ChatHandler) -> Result<Option<FunctionCall>, Exception> {
         self.messages.push(content);
 
         let response = self.call_api().await?;
@@ -108,7 +103,7 @@ impl Vertex {
                     }
                 }
                 Err(err) => {
-                    return Err(Box::new(err));
+                    return Err(err);
                 }
             }
         }
@@ -119,7 +114,7 @@ impl Vertex {
         Ok(None)
     }
 
-    async fn call_api(&mut self) -> Result<Response, Box<dyn Error>> {
+    async fn call_api(&mut self) -> Result<Response, Exception> {
         let has_function = !self.function_implementations.is_empty();
 
         let endpoint = &self.endpoint;
@@ -141,7 +136,7 @@ impl Vertex {
         Ok(response)
     }
 
-    async fn post(&self, url: &str, request: &StreamGenerateContent<'_>) -> Result<Response, Box<dyn Error>> {
+    async fn post(&self, url: &str, request: &StreamGenerateContent<'_>) -> Result<Response, Exception> {
         let body = json::to_json(request)?;
         let response = http_client::http_client()
             .post(url)
@@ -154,11 +149,11 @@ impl Vertex {
 
         let status = response.status();
         if status != 200 {
-            return Err(Box::new(Exception::new(&format!(
+            return Err(Exception::new(&format!(
                 "failed to call gcloud api, status={}, response={}",
                 status,
                 response.text().await?
-            ))));
+            )));
         }
         Ok(response)
     }

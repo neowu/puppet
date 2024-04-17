@@ -1,7 +1,6 @@
-use std::any::Any;
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::error::Error;
+
 use std::fmt;
 use std::sync::Arc;
 
@@ -15,7 +14,6 @@ use tokio::sync::mpsc::channel;
 use tokio::sync::mpsc::Sender;
 use tokio::task::JoinHandle;
 
-use crate::bot::Bot;
 use crate::bot::ChatEvent;
 use crate::bot::ChatHandler;
 use crate::bot::Function;
@@ -45,21 +43,6 @@ enum InternalEvent {
 
 type FunctionCall = HashMap<i64, (String, String, String)>;
 
-impl Bot for ChatGPT {
-    fn register_function(&mut self, function: Function, implementation: Box<FunctionImplementation>) {
-        let name = function.name.to_string();
-        self.tools.push(Tool {
-            r#type: "function".to_string(),
-            function,
-        });
-        self.function_implementations.insert(name, Arc::new(implementation));
-    }
-
-    fn as_any(&mut self) -> &mut dyn Any {
-        self
-    }
-}
-
 impl ChatGPT {
     pub fn new(endpoint: String, api_key: String, model: String, system_message: Option<String>) -> Self {
         let mut chatgpt = ChatGPT {
@@ -76,25 +59,29 @@ impl ChatGPT {
         chatgpt
     }
 
-    pub async fn chat(&mut self, message: &str, handler: &dyn ChatHandler) -> Result<(), Box<dyn Error>> {
+    pub fn register_function(&mut self, function: Function, implementation: Box<FunctionImplementation>) {
+        let name = function.name.to_string();
+        self.tools.push(Tool {
+            r#type: "function".to_string(),
+            function,
+        });
+        self.function_implementations.insert(name, Arc::new(implementation));
+    }
+
+    pub async fn chat(&mut self, message: &str, handler: &dyn ChatHandler) -> Result<(), Exception> {
         self.messages.push(ChatRequestMessage::new_message(Role::User, message));
         let result = self.process(handler).await;
         if let Ok(Some(InternalEvent::FunctionCall(calls))) = result {
             let handles: Result<Vec<JoinHandle<_>>, _> = calls
                 .into_iter()
                 .map(|(_, (id, name, args))| {
-                    let function = Arc::clone(
-                        self.function_implementations
-                            .get(&name)
-                            .ok_or_else(|| Exception::new(&format!("function not found, name={name}")))?,
-                    );
+                    let function = self.get_function(&name)?;
                     Ok::<JoinHandle<_>, Exception>(tokio::spawn(async move { (id, function(json::from_json(&args).unwrap())) }))
                 })
                 .collect();
 
-            let results = join_all(handles?).await;
-            for result in results {
-                let result = result?;
+            let results: Result<Vec<_>, _> = join_all(handles?).await.into_iter().collect();
+            for result in results? {
                 let function_message = ChatRequestMessage::new_function_response(result.0.to_string(), json::to_json(&result.1)?);
                 self.messages.push(function_message);
             }
@@ -102,6 +89,15 @@ impl ChatGPT {
             self.process(handler).await?;
         }
         Ok(())
+    }
+
+    fn get_function(&mut self, name: &str) -> Result<Arc<Box<FunctionImplementation>>, Exception> {
+        let function = Arc::clone(
+            self.function_implementations
+                .get(name)
+                .ok_or_else(|| Exception::new(&format!("function not found, name={name}")))?,
+        );
+        Ok(function)
     }
 
     async fn process(&mut self, handler: &dyn ChatHandler) -> Result<Option<InternalEvent>, Exception> {

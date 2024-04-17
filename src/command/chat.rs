@@ -1,4 +1,3 @@
-use std::error::Error;
 use std::io;
 use std::io::BufRead;
 use std::io::Write;
@@ -9,8 +8,8 @@ use clap::Args;
 use crate::bot;
 use crate::bot::ChatEvent;
 use crate::bot::ChatHandler;
-use crate::gcloud::vertex::Vertex;
-use crate::openai::chatgpt::ChatGPT;
+
+use crate::util::exception::Exception;
 
 #[derive(Args)]
 #[command(about = "chat")]
@@ -41,10 +40,10 @@ impl ChatHandler for ConsoleHandler {
 }
 
 impl Chat {
-    pub async fn execute(&self) -> Result<(), Box<dyn Error>> {
+    pub async fn execute(&self) -> Result<(), Exception> {
         let config = bot::load(Path::new(&self.conf))?;
 
-        let mut bot = config.create(&self.name);
+        let mut bot = config.create(&self.name)?;
         let handler = ConsoleHandler {};
         loop {
             print_flush("> ")?;
@@ -54,26 +53,20 @@ impl Chat {
                 break;
             }
 
-            if &self.name == "gpt4" {
-                let any = bot.as_any().downcast_mut::<ChatGPT>().unwrap();
-                any.chat(&line, &handler).await?;
-            } else {
-                let any = bot.as_any().downcast_mut::<Vertex>().unwrap();
-                any.chat(&line, &handler).await?;
-            }
+            bot.chat(&line, &handler).await?;
         }
         Ok(())
     }
 }
 
-fn read_line() -> Result<String, Box<dyn Error>> {
+fn read_line() -> Result<String, Exception> {
     let mut line = String::new();
     io::stdin().lock().read_line(&mut line)?;
     let line = line.trim_end();
     Ok(line.to_string())
 }
 
-fn print_flush(message: &str) -> Result<(), Box<dyn Error>> {
+fn print_flush(message: &str) -> Result<(), Exception> {
     print!("{}", message);
     io::stdout().flush()?;
     Ok(())

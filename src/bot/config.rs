@@ -4,6 +4,7 @@ use crate::bot::Bot;
 use crate::bot::Function;
 use crate::gcloud::vertex::Vertex;
 use crate::openai::chatgpt::ChatGPT;
+use crate::util::exception::Exception;
 use rand::Rng;
 use serde::Deserialize;
 use serde_json::json;
@@ -14,18 +15,20 @@ pub struct Config {
 }
 
 impl Config {
-    // TODO: think about how to make async trait object
-    pub fn create(&self, name: &str) -> Box<dyn Bot> {
-        let config = self.bots.get(name).unwrap();
+    pub fn create(&self, name: &str) -> Result<Bot, Exception> {
+        let config = self
+            .bots
+            .get(name)
+            .ok_or_else(|| Exception::new(&format!("can not find bot, name={name}")))?;
 
-        let mut bot: Box<dyn Bot> = match config.r#type {
-            BotType::Azure => Box::new(ChatGPT::new(
+        let mut bot = match config.r#type {
+            BotType::Azure => Bot::ChatGPT(ChatGPT::new(
                 config.endpoint.to_string(),
                 config.params.get("api_key").unwrap().to_string(),
                 config.params.get("model").unwrap().to_string(),
                 Option::None,
             )),
-            BotType::GCloud => Box::new(Vertex::new(
+            BotType::GCloud => Bot::Vertex(Vertex::new(
                 config.endpoint.to_string(),
                 config.params.get("project").unwrap().to_string(),
                 config.params.get("location").unwrap().to_string(),
@@ -33,7 +36,7 @@ impl Config {
             )),
         };
         register_function(config, &mut bot);
-        bot
+        Ok(bot)
     }
 }
 
@@ -51,7 +54,7 @@ pub enum BotType {
     GCloud,
 }
 
-fn register_function(config: &BotConfig, bot: &mut Box<dyn Bot>) {
+fn register_function(config: &BotConfig, bot: &mut Bot) {
     for function in &config.functions {
         if let "get_random_number" = function.as_str() {
             bot.register_function(

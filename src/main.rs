@@ -3,7 +3,8 @@ use clap::Subcommand;
 use command::chat::Chat;
 use command::generate_zsh_completion::GenerateZshCompletion;
 use command::server::Server;
-use std::error::Error;
+
+use util::exception::Exception;
 
 mod bot;
 mod command;
@@ -28,7 +29,7 @@ pub enum Commands {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+async fn main() -> Result<(), Exception> {
     tracing_subscriber::fmt::init();
     let cli = Cli::parse();
     match &cli.command {
