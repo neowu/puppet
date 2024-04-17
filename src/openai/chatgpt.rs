@@ -2,7 +2,6 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 
 use std::fmt;
-use std::sync::Arc;
 
 use futures::future::join_all;
 use futures::stream::StreamExt;
@@ -16,8 +15,8 @@ use tokio::task::JoinHandle;
 
 use crate::bot::ChatEvent;
 use crate::bot::ChatHandler;
-use crate::bot::Function;
-use crate::bot::FunctionImplementation;
+
+use crate::bot::FunctionStore;
 use crate::openai::api::ChatRequest;
 use crate::openai::api::ChatRequestMessage;
 use crate::openai::api::ChatResponse;
@@ -28,12 +27,12 @@ use crate::util::http_client;
 use crate::util::json;
 
 pub struct ChatGPT {
-    pub endpoint: String,
-    pub api_key: String,
-    pub model: String,
+    endpoint: String,
+    api_key: String,
+    model: String,
     messages: Vec<ChatRequestMessage>,
     tools: Vec<Tool>,
-    function_implementations: HashMap<String, Arc<Box<FunctionImplementation>>>,
+    function_store: FunctionStore,
 }
 
 enum InternalEvent {
@@ -44,28 +43,26 @@ enum InternalEvent {
 type FunctionCall = HashMap<i64, (String, String, String)>;
 
 impl ChatGPT {
-    pub fn new(endpoint: String, api_key: String, model: String, system_message: Option<String>) -> Self {
+    pub fn new(endpoint: String, api_key: String, model: String, system_message: Option<String>, function_store: FunctionStore) -> Self {
         let mut chatgpt = ChatGPT {
             endpoint,
             api_key,
             model,
             messages: vec![],
-            tools: vec![],
-            function_implementations: HashMap::new(),
+            tools: function_store
+                .declarations
+                .iter()
+                .map(|f| Tool {
+                    r#type: "function".to_string(),
+                    function: f.clone(),
+                })
+                .collect(),
+            function_store,
         };
         if let Some(message) = system_message {
             chatgpt.messages.push(ChatRequestMessage::new_message(Role::System, &message));
         }
         chatgpt
-    }
-
-    pub fn register_function(&mut self, function: Function, implementation: Box<FunctionImplementation>) {
-        let name = function.name.to_string();
-        self.tools.push(Tool {
-            r#type: "function".to_string(),
-            function,
-        });
-        self.function_implementations.insert(name, Arc::new(implementation));
     }
 
     pub async fn chat(&mut self, message: &str, handler: &dyn ChatHandler) -> Result<(), Exception> {
@@ -75,7 +72,7 @@ impl ChatGPT {
             let handles: Result<Vec<JoinHandle<_>>, _> = calls
                 .into_iter()
                 .map(|(_, (id, name, args))| {
-                    let function = self.get_function(&name)?;
+                    let function = self.function_store.get(&name)?;
                     Ok::<JoinHandle<_>, Exception>(tokio::spawn(async move { (id, function(json::from_json(&args).unwrap())) }))
                 })
                 .collect();
@@ -89,15 +86,6 @@ impl ChatGPT {
             self.process(handler).await?;
         }
         Ok(())
-    }
-
-    fn get_function(&mut self, name: &str) -> Result<Arc<Box<FunctionImplementation>>, Exception> {
-        let function = Arc::clone(
-            self.function_implementations
-                .get(name)
-                .ok_or_else(|| Exception::new(&format!("function not found, name={name}")))?,
-        );
-        Ok(function)
     }
 
     async fn process(&mut self, handler: &dyn ChatHandler) -> Result<Option<InternalEvent>, Exception> {
@@ -132,7 +120,7 @@ impl ChatGPT {
     }
 
     async fn call_api(&mut self) -> Result<EventSource, Exception> {
-        let has_function = !self.function_implementations.is_empty();
+        let has_function = !self.tools.is_empty();
 
         let request = ChatRequest {
             messages: Cow::from(&self.messages),

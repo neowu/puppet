@@ -42,8 +42,8 @@ impl ChatHandler for ConsoleHandler {
 impl Chat {
     pub async fn execute(&self) -> Result<(), Exception> {
         let config = bot::load(Path::new(&self.conf))?;
-
         let mut bot = config.create(&self.name)?;
+
         let handler = ConsoleHandler {};
         loop {
             print_flush("> ")?;

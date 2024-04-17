@@ -1,5 +1,7 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+use std::sync::Arc;
 
 use serde::Serialize;
 use tracing::info;
@@ -33,27 +35,45 @@ pub struct Function {
 
 pub type FunctionImplementation = dyn Fn(serde_json::Value) -> serde_json::Value + Send + Sync;
 
+pub struct FunctionStore {
+    pub declarations: Vec<Function>,
+    pub implementations: HashMap<String, Arc<Box<FunctionImplementation>>>,
+}
+
+impl FunctionStore {
+    pub fn new() -> Self {
+        FunctionStore {
+            declarations: vec![],
+            implementations: HashMap::new(),
+        }
+    }
+
+    pub fn add(&mut self, function: Function, implementation: Box<FunctionImplementation>) {
+        let name = function.name.to_string();
+        self.declarations.push(function);
+        self.implementations.insert(name, Arc::new(implementation));
+    }
+
+    pub fn get(&self, name: &str) -> Result<Arc<Box<FunctionImplementation>>, Exception> {
+        let function = Arc::clone(
+            self.implementations
+                .get(name)
+                .ok_or_else(|| Exception::new(&format!("function not found, name={name}")))?,
+        );
+        Ok(function)
+    }
+}
+
 pub enum Bot {
     ChatGPT(ChatGPT),
     Vertex(Vertex),
 }
 
 impl Bot {
-    pub fn register_function(&mut self, function: Function, implementation: Box<FunctionImplementation>) {
-        match self {
-            Bot::ChatGPT(chat_gpt) => {
-                chat_gpt.register_function(function, implementation);
-            }
-            Bot::Vertex(vertex) => {
-                vertex.register_function(function, implementation);
-            }
-        }
-    }
-
     pub async fn chat(&mut self, message: &str, handler: &dyn ChatHandler) -> Result<(), Exception> {
         match self {
-            Bot::ChatGPT(chat_gpt) => chat_gpt.chat(message, handler).await,
-            Bot::Vertex(vertex) => vertex.chat(message, handler).await,
+            Bot::ChatGPT(bot) => bot.chat(message, handler).await,
+            Bot::Vertex(bot) => bot.chat(message, handler).await,
         }
     }
 }

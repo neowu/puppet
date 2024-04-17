@@ -9,6 +9,8 @@ use rand::Rng;
 use serde::Deserialize;
 use serde_json::json;
 
+use super::FunctionStore;
+
 #[derive(Deserialize, Debug)]
 pub struct Config {
     pub bots: HashMap<String, BotConfig>,
@@ -21,21 +23,25 @@ impl Config {
             .get(name)
             .ok_or_else(|| Exception::new(&format!("can not find bot, name={name}")))?;
 
-        let mut bot = match config.r#type {
+        let function_store = load_function_store(config);
+
+        let bot = match config.r#type {
             BotType::Azure => Bot::ChatGPT(ChatGPT::new(
                 config.endpoint.to_string(),
                 config.params.get("api_key").unwrap().to_string(),
                 config.params.get("model").unwrap().to_string(),
                 Option::None,
+                function_store,
             )),
             BotType::GCloud => Bot::Vertex(Vertex::new(
                 config.endpoint.to_string(),
                 config.params.get("project").unwrap().to_string(),
                 config.params.get("location").unwrap().to_string(),
                 config.params.get("model").unwrap().to_string(),
+                function_store,
             )),
         };
-        register_function(config, &mut bot);
+
         Ok(bot)
     }
 }
@@ -54,10 +60,11 @@ pub enum BotType {
     GCloud,
 }
 
-fn register_function(config: &BotConfig, bot: &mut Bot) {
+fn load_function_store(config: &BotConfig) -> FunctionStore {
+    let mut function_store = FunctionStore::new();
     for function in &config.functions {
         if let "get_random_number" = function.as_str() {
-            bot.register_function(
+            function_store.add(
                 Function {
                     name: "get_random_number".to_string(),
                     description: "generate random number".to_string(),
@@ -84,4 +91,5 @@ fn register_function(config: &BotConfig, bot: &mut Bot) {
             );
         }
     }
+    function_store
 }

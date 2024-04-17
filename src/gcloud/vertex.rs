@@ -4,15 +4,13 @@ use tokio::sync::mpsc::channel;
 use tokio::sync::mpsc::Sender;
 
 use std::borrow::Cow;
-use std::collections::HashMap;
-use std::env;
 
-use std::sync::Arc;
+use std::env;
 
 use crate::bot::ChatEvent;
 use crate::bot::ChatHandler;
-use crate::bot::Function;
-use crate::bot::FunctionImplementation;
+
+use crate::bot::FunctionStore;
 use crate::gcloud::api::GenerateContentResponse;
 use crate::util::exception::Exception;
 use crate::util::http_client;
@@ -26,48 +24,39 @@ use super::api::StreamGenerateContent;
 use super::api::Tool;
 
 pub struct Vertex {
-    pub endpoint: String,
-    pub project: String,
-    pub location: String,
-    pub model: String,
+    endpoint: String,
+    project: String,
+    location: String,
+    model: String,
     messages: Vec<Content>,
     tools: Vec<Tool>,
-    function_implementations: HashMap<String, Arc<Box<FunctionImplementation>>>,
+    function_store: FunctionStore,
 }
 
 impl Vertex {
-    pub fn new(endpoint: String, project: String, location: String, model: String) -> Self {
+    pub fn new(endpoint: String, project: String, location: String, model: String, function_store: FunctionStore) -> Self {
         Vertex {
             endpoint,
             project,
             location,
             model,
             messages: vec![],
-            tools: vec![],
-            function_implementations: HashMap::new(),
+            tools: function_store
+                .declarations
+                .iter()
+                .map(|f| Tool {
+                    function_declarations: vec![f.clone()],
+                })
+                .collect(),
+            function_store,
         }
     }
 
-    pub fn register_function(&mut self, function: Function, implementation: Box<FunctionImplementation>) {
-        let name = function.name.to_string();
-        self.tools.push(Tool {
-            function_declarations: vec![function],
-        });
-        self.function_implementations.insert(name, Arc::new(implementation));
-    }
-
     pub async fn chat(&mut self, message: &str, handler: &dyn ChatHandler) -> Result<(), Exception> {
-        let mut result = self
-            .process(Content::new_text(Role::User, message), handler)
-            .await
-            .map_err(Exception::from)?;
+        let mut result = self.process(Content::new_text(Role::User, message), handler).await?;
 
         while let Some(function_call) = result {
-            let function = Arc::clone(
-                self.function_implementations
-                    .get(&function_call.name)
-                    .ok_or_else(|| Exception::new(&format!("function not found, name={}", function_call.name)))?,
-            );
+            let function = self.function_store.get(&function_call.name)?;
 
             let function_response = tokio::spawn(async move { function(function_call.args) }).await?;
 
@@ -114,8 +103,8 @@ impl Vertex {
         Ok(None)
     }
 
-    async fn call_api(&mut self) -> Result<Response, Exception> {
-        let has_function = !self.function_implementations.is_empty();
+    async fn call_api(&self) -> Result<Response, Exception> {
+        let has_function = !self.tools.is_empty();
 
         let endpoint = &self.endpoint;
         let project = &self.project;
