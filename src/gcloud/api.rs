@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use std::rc::Rc;
 
 use serde::Deserialize;
 use serde::Serialize;
@@ -6,23 +6,22 @@ use serde::Serialize;
 use crate::bot::Function;
 
 #[derive(Debug, Serialize)]
-pub struct StreamGenerateContent<'a> {
-    #[serde(borrow)]
-    pub contents: Cow<'a, [Content]>,
+pub struct StreamGenerateContent {
+    pub contents: Rc<Vec<Content>>,
     #[serde(rename = "generationConfig")]
     pub generation_config: GenerationConfig,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tools: Option<Cow<'a, [Tool]>>,
+    pub tools: Option<Rc<Vec<Tool>>>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Content {
     pub role: Role,
     pub parts: Vec<Part>,
 }
 
 impl Content {
-    pub fn new_text(role: Role, message: &str) -> Self {
+    pub fn new_text(role: Role, message: String) -> Self {
         Self {
             role,
             parts: vec![Part {
@@ -33,16 +32,13 @@ impl Content {
         }
     }
 
-    pub fn new_function_response(name: &str, response: serde_json::Value) -> Self {
+    pub fn new_function_response(name: String, response: serde_json::Value) -> Self {
         Self {
             role: Role::User,
             parts: vec![Part {
                 text: None,
                 function_call: None,
-                function_response: Some(FunctionResponse {
-                    name: name.to_string(),
-                    response,
-                }),
+                function_response: Some(FunctionResponse { name, response }),
             }],
         }
     }
@@ -59,13 +55,13 @@ impl Content {
     }
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize)]
 pub struct Tool {
     #[serde(rename = "functionDeclarations")]
     pub function_declarations: Vec<Function>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum Role {
     #[serde(rename = "user")]
     User,
@@ -73,7 +69,7 @@ pub enum Role {
     Model,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Part {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
@@ -110,7 +106,7 @@ pub struct FunctionCall {
     pub args: serde_json::Value,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct FunctionResponse {
     pub name: String,
     pub response: serde_json::Value,

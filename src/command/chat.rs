@@ -24,9 +24,9 @@ pub struct Chat {
 struct ConsoleHandler;
 
 impl ChatHandler for ConsoleHandler {
-    fn on_event(&self, event: &ChatEvent) {
+    fn on_event(&self, event: ChatEvent) {
         match event {
-            ChatEvent::Delta(data) => {
+            ChatEvent::Delta(ref data) => {
                 print_flush(data).unwrap();
             }
             ChatEvent::Error(error) => {
@@ -53,7 +53,7 @@ impl Chat {
                 break;
             }
 
-            bot.chat(&line, &handler).await?;
+            bot.chat(line, &handler).await?;
         }
         Ok(())
     }

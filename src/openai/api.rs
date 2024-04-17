@@ -1,5 +1,5 @@
-use std::borrow::Cow;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use serde::Deserialize;
 use serde::Serialize;
@@ -7,9 +7,8 @@ use serde::Serialize;
 use crate::bot::Function;
 
 #[derive(Debug, Serialize)]
-pub struct ChatRequest<'a> {
-    #[serde(borrow)]
-    pub messages: Cow<'a, [ChatRequestMessage]>,
+pub struct ChatRequest {
+    pub messages: Rc<Vec<ChatRequestMessage>>,
     pub temperature: f32,
     pub top_p: f32,
     pub stream: bool,
@@ -21,10 +20,10 @@ pub struct ChatRequest<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tools: Option<Cow<'a, [Tool]>>,
+    pub tools: Option<Rc<Vec<Tool>>>,
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize)]
 pub struct ChatRequestMessage {
     pub role: Role,
     pub content: Option<String>,
@@ -35,10 +34,10 @@ pub struct ChatRequestMessage {
 }
 
 impl ChatRequestMessage {
-    pub fn new_message(role: Role, message: &str) -> Self {
+    pub fn new_message(role: Role, message: String) -> Self {
         ChatRequestMessage {
             role,
-            content: Some(message.to_string()),
+            content: Some(message),
             tool_call_id: None,
             tool_calls: None,
         }
@@ -76,13 +75,13 @@ impl ChatRequestMessage {
     }
 }
 
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize)]
 pub struct Tool {
     pub r#type: String,
     pub function: Function,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize)]
 pub enum Role {
     #[serde(rename = "user")]
     User,
@@ -117,7 +116,7 @@ pub struct ChatResponseMessage {
     pub tool_calls: Option<Vec<ToolCall>>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ToolCall {
     pub index: i64,
     pub id: Option<String>,
@@ -125,7 +124,7 @@ pub struct ToolCall {
     pub function: FunctionCall,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct FunctionCall {
     pub name: Option<String>,
     pub arguments: String,

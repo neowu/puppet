@@ -3,9 +3,8 @@ use reqwest::Response;
 use tokio::sync::mpsc::channel;
 use tokio::sync::mpsc::Sender;
 
-use std::borrow::Cow;
-
 use std::env;
+use std::rc::Rc;
 
 use crate::bot::ChatEvent;
 use crate::bot::ChatHandler;
@@ -28,8 +27,8 @@ pub struct Vertex {
     project: String,
     location: String,
     model: String,
-    messages: Vec<Content>,
-    tools: Vec<Tool>,
+    messages: Rc<Vec<Content>>,
+    tools: Rc<Vec<Tool>>,
     function_store: FunctionStore,
 }
 
@@ -40,19 +39,21 @@ impl Vertex {
             project,
             location,
             model,
-            messages: vec![],
-            tools: function_store
-                .declarations
-                .iter()
-                .map(|f| Tool {
-                    function_declarations: vec![f.clone()],
-                })
-                .collect(),
+            messages: Rc::new(vec![]),
+            tools: Rc::new(
+                function_store
+                    .declarations
+                    .iter()
+                    .map(|f| Tool {
+                        function_declarations: vec![f.clone()],
+                    })
+                    .collect(),
+            ),
             function_store,
         }
     }
 
-    pub async fn chat(&mut self, message: &str, handler: &dyn ChatHandler) -> Result<(), Exception> {
+    pub async fn chat(&mut self, message: String, handler: &dyn ChatHandler) -> Result<(), Exception> {
         let mut result = self.process(Content::new_text(Role::User, message), handler).await?;
 
         while let Some(function_call) = result {
@@ -60,14 +61,14 @@ impl Vertex {
 
             let function_response = tokio::spawn(async move { function(function_call.args) }).await?;
 
-            let content = Content::new_function_response(&function_call.name, function_response);
+            let content = Content::new_function_response(function_call.name, function_response);
             result = self.process(content, handler).await?;
         }
         Ok(())
     }
 
     async fn process(&mut self, content: Content, handler: &dyn ChatHandler) -> Result<Option<FunctionCall>, Exception> {
-        self.messages.push(content);
+        self.add_message(content);
 
         let response = self.call_api().await?;
 
@@ -81,14 +82,14 @@ impl Vertex {
         while let Some(response) = rx.recv().await {
             match response {
                 Ok(response) => {
-                    let part = response.candidates.first().unwrap().content.parts.first().unwrap();
+                    let part = response.candidates.into_iter().next().unwrap().content.parts.into_iter().next().unwrap();
 
-                    if let Some(function) = part.function_call.as_ref() {
-                        self.messages.push(Content::new_function_call(function.clone()));
-                        return Ok(Some(function.clone()));
-                    } else if let Some(text) = part.text.as_ref() {
-                        handler.on_event(&ChatEvent::Delta(text.to_string()));
-                        model_message.push_str(text);
+                    if let Some(function) = part.function_call {
+                        self.add_message(Content::new_function_call(function.clone()));
+                        return Ok(Some(function));
+                    } else if let Some(text) = part.text {
+                        handler.on_event(ChatEvent::Delta(text.clone()));
+                        model_message.push_str(&text);
                     }
                 }
                 Err(err) => {
@@ -97,10 +98,14 @@ impl Vertex {
             }
         }
         if !model_message.is_empty() {
-            self.messages.push(Content::new_text(Role::Model, &model_message));
+            self.add_message(Content::new_text(Role::Model, model_message));
         }
-        handler.on_event(&ChatEvent::End);
+        handler.on_event(ChatEvent::End);
         Ok(None)
+    }
+
+    fn add_message(&mut self, content: Content) {
+        Rc::get_mut(&mut self.messages).unwrap().push(content);
     }
 
     async fn call_api(&self) -> Result<Response, Exception> {
@@ -113,19 +118,19 @@ impl Vertex {
         let url = format!("{endpoint}/v1/projects/{project}/locations/{location}/publishers/google/models/{model}:streamGenerateContent");
 
         let request = StreamGenerateContent {
-            contents: Cow::from(&self.messages),
+            contents: Rc::clone(&self.messages),
             generation_config: GenerationConfig {
                 temperature: 1.0,
                 top_p: 0.95,
                 max_output_tokens: 2048,
             },
-            tools: has_function.then(|| Cow::from(&self.tools)),
+            tools: has_function.then(|| Rc::clone(&self.tools)),
         };
         let response = self.post(&url, &request).await?;
         Ok(response)
     }
 
-    async fn post(&self, url: &str, request: &StreamGenerateContent<'_>) -> Result<Response, Exception> {
+    async fn post(&self, url: &str, request: &StreamGenerateContent) -> Result<Response, Exception> {
         let body = json::to_json(request)?;
         let response = http_client::http_client()
             .post(url)

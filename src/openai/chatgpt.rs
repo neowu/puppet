@@ -1,7 +1,7 @@
-use std::borrow::Cow;
 use std::collections::HashMap;
 
 use std::fmt;
+use std::rc::Rc;
 
 use futures::future::join_all;
 use futures::stream::StreamExt;
@@ -30,8 +30,8 @@ pub struct ChatGPT {
     endpoint: String,
     api_key: String,
     model: String,
-    messages: Vec<ChatRequestMessage>,
-    tools: Vec<Tool>,
+    messages: Rc<Vec<ChatRequestMessage>>,
+    tools: Rc<Vec<Tool>>,
     function_store: FunctionStore,
 }
 
@@ -48,25 +48,27 @@ impl ChatGPT {
             endpoint,
             api_key,
             model,
-            messages: vec![],
-            tools: function_store
-                .declarations
-                .iter()
-                .map(|f| Tool {
-                    r#type: "function".to_string(),
-                    function: f.clone(),
-                })
-                .collect(),
+            messages: Rc::new(vec![]),
+            tools: Rc::new(
+                function_store
+                    .declarations
+                    .iter()
+                    .map(|f| Tool {
+                        r#type: "function".to_string(),
+                        function: f.clone(),
+                    })
+                    .collect(),
+            ),
             function_store,
         };
         if let Some(message) = system_message {
-            chatgpt.messages.push(ChatRequestMessage::new_message(Role::System, &message));
+            chatgpt.add_message(ChatRequestMessage::new_message(Role::System, message));
         }
         chatgpt
     }
 
-    pub async fn chat(&mut self, message: &str, handler: &dyn ChatHandler) -> Result<(), Exception> {
-        self.messages.push(ChatRequestMessage::new_message(Role::User, message));
+    pub async fn chat(&mut self, message: String, handler: &dyn ChatHandler) -> Result<(), Exception> {
+        self.add_message(ChatRequestMessage::new_message(Role::User, message));
         let result = self.process(handler).await;
         if let Ok(Some(InternalEvent::FunctionCall(calls))) = result {
             let handles: Result<Vec<JoinHandle<_>>, _> = calls
@@ -79,13 +81,17 @@ impl ChatGPT {
 
             let results: Result<Vec<_>, _> = join_all(handles?).await.into_iter().collect();
             for result in results? {
-                let function_message = ChatRequestMessage::new_function_response(result.0.to_string(), json::to_json(&result.1)?);
-                self.messages.push(function_message);
+                let function_message = ChatRequestMessage::new_function_response(result.0, json::to_json(&result.1)?);
+                self.add_message(function_message);
             }
 
             self.process(handler).await?;
         }
         Ok(())
+    }
+
+    fn add_message(&mut self, message: ChatRequestMessage) {
+        Rc::get_mut(&mut self.messages).unwrap().push(message);
     }
 
     async fn process(&mut self, handler: &dyn ChatHandler) -> Result<Option<InternalEvent>, Exception> {
@@ -100,20 +106,20 @@ impl ChatGPT {
         while let Some(event) = rx.recv().await {
             match event {
                 InternalEvent::Event(event) => {
-                    handler.on_event(&event);
-                    if let ChatEvent::Delta(data) = event {
-                        assistant_message.push_str(&data);
+                    if let ChatEvent::Delta(ref data) = event {
+                        assistant_message.push_str(data);
                     }
+                    handler.on_event(event);
                 }
                 InternalEvent::FunctionCall(calls) => {
-                    self.messages.push(ChatRequestMessage::new_function_call(&calls));
+                    self.add_message(ChatRequestMessage::new_function_call(&calls));
                     return Ok(Some(InternalEvent::FunctionCall(calls)));
                 }
             }
         }
 
         if !assistant_message.is_empty() {
-            self.messages.push(ChatRequestMessage::new_message(Role::Assistant, &assistant_message));
+            self.add_message(ChatRequestMessage::new_message(Role::Assistant, assistant_message));
         }
 
         Ok(None)
@@ -123,7 +129,7 @@ impl ChatGPT {
         let has_function = !self.tools.is_empty();
 
         let request = ChatRequest {
-            messages: Cow::from(&self.messages),
+            messages: Rc::clone(&self.messages),
             temperature: 0.8,
             top_p: 0.8,
             stream: true,
@@ -132,7 +138,7 @@ impl ChatGPT {
             presence_penalty: 0.0,
             frequency_penalty: 0.0,
             tool_choice: has_function.then(|| "auto".to_string()),
-            tools: has_function.then(|| Cow::from(&self.tools)),
+            tools: has_function.then(|| Rc::clone(&self.tools)),
         };
         let source = self.post_sse(&request).await?;
         Ok(source)
