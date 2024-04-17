@@ -75,17 +75,18 @@ impl Vertex {
         Ok(())
     }
 
-    pub async fn upload(&mut self, path: &Path, message: String, handler: &dyn ChatHandler) -> Result<(), Exception> {
+    pub async fn data(&mut self, path: &Path, message: String, handler: &dyn ChatHandler) -> Result<(), Exception> {
         let extension = path
             .extension()
-            .ok_or_else(|| Exception::new(&format!("file must have extension, path={}", path.to_string_lossy())))?
+            .ok_or_else(|| Exception::new(format!("file must have extension, path={}", path.to_string_lossy())))?
             .to_str()
             .unwrap();
         let content = fs::read(path)?;
         let mime_type = match extension {
             "jpg" => Ok("image/jpeg".to_string()),
+            "png" => Ok("image/png".to_string()),
             "pdf" => Ok("application/pdf".to_string()),
-            _ => Err(Exception::new("not supported extension")),
+            _ => Err(Exception::new(format!("not supported extension, path={}", path.to_string_lossy()))),
         }?;
         self.process(Content::new_inline_data(mime_type, BASE64_STANDARD.encode(content), message), handler)
             .await?;
@@ -158,7 +159,7 @@ impl Vertex {
 
         let status = response.status();
         if status != 200 {
-            return Err(Exception::new(&format!(
+            return Err(Exception::new(format!(
                 "failed to call gcloud api, status={}, response={}",
                 status,
                 response.text().await?
@@ -187,7 +188,7 @@ async fn process_response_stream(response: Response, tx: Sender<Result<GenerateC
                 buffer.clear();
             }
             Err(err) => {
-                tx.send(Err(Exception::new(&err.to_string()))).await.unwrap();
+                tx.send(Err(Exception::new(err.to_string()))).await.unwrap();
                 break;
             }
         }

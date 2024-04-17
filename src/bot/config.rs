@@ -22,7 +22,7 @@ impl Config {
         let config = self
             .bots
             .get(name)
-            .ok_or_else(|| Exception::new(&format!("can not find bot, name={name}")))?;
+            .ok_or_else(|| Exception::new(format!("can not find bot, name={name}")))?;
 
         let function_store = load_function_store(config);
 

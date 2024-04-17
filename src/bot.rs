@@ -58,7 +58,7 @@ impl FunctionStore {
         let function = Arc::clone(
             self.implementations
                 .get(name)
-                .ok_or_else(|| Exception::new(&format!("function not found, name={name}")))?,
+                .ok_or_else(|| Exception::new(format!("function not found, name={name}")))?,
         );
         Ok(function)
     }
@@ -77,10 +77,10 @@ impl Bot {
         }
     }
 
-    pub async fn upload(&mut self, path: &Path, message: String, handler: &dyn ChatHandler) -> Result<(), Exception> {
+    pub async fn data(&mut self, path: &Path, message: String, handler: &dyn ChatHandler) -> Result<(), Exception> {
         match self {
             Bot::ChatGPT(_bot) => todo!("not impl"),
-            Bot::Vertex(bot) => bot.upload(path, message, handler).await,
+            Bot::Vertex(bot) => bot.data(path, message, handler).await,
         }
     }
 }

@@ -9,6 +9,7 @@ pub fn http_client() -> &'static reqwest::Client {
 
 impl From<reqwest::Error> for Exception {
     fn from(err: reqwest::Error) -> Self {
-        Exception::from_with_context(&err, &format!("requestURI={}", err.url().map_or("", |url| url.as_str())))
+        let url = err.url().map_or("", |url| url.as_str()).to_string();
+        Exception::from_with_context(err, format!("url={}", url))
     }
 }

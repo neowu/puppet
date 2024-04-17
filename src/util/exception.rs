@@ -12,8 +12,8 @@ pub struct Exception {
 }
 
 impl Exception {
-    pub fn new(message: &str) -> Self {
-        Exception::create(message.to_string(), None)
+    pub fn new(message: String) -> Self {
+        Exception::create(message, None)
     }
 
     pub fn from<T>(error: T) -> Self
@@ -23,11 +23,11 @@ impl Exception {
         Exception::create(error.to_string(), None)
     }
 
-    pub fn from_with_context<T>(error: &T, context: &str) -> Self
+    pub fn from_with_context<T>(error: T, context: String) -> Self
     where
         T: Error + 'static,
     {
-        Exception::create(error.to_string(), Some(context.to_string()))
+        Exception::create(error.to_string(), Some(context))
     }
 
     fn create(message: String, context: Option<String>) -> Self {
@@ -61,12 +61,12 @@ impl Error for Exception {}
 
 impl From<io::Error> for Exception {
     fn from(err: io::Error) -> Self {
-        Exception::new(&err.to_string())
+        Exception::new(err.to_string())
     }
 }
 
 impl From<JoinError> for Exception {
     fn from(err: JoinError) -> Self {
-        Exception::new(&err.to_string())
+        Exception::new(err.to_string())
     }
 }

@@ -161,7 +161,7 @@ impl ChatGPT {
 
 impl From<CannotCloneRequestError> for Exception {
     fn from(err: CannotCloneRequestError) -> Self {
-        Exception::new(&err.to_string())
+        Exception::new(err.to_string())
     }
 }
 
