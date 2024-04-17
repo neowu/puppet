@@ -1,9 +1,13 @@
+use base64::prelude::BASE64_STANDARD;
+use base64::Engine;
 use futures::StreamExt;
 use reqwest::Response;
 use tokio::sync::mpsc::channel;
 use tokio::sync::mpsc::Sender;
 
 use std::env;
+use std::fs;
+use std::path::Path;
 use std::rc::Rc;
 
 use crate::bot::ChatEvent;
@@ -23,23 +27,27 @@ use super::api::StreamGenerateContent;
 use super::api::Tool;
 
 pub struct Vertex {
-    endpoint: String,
-    project: String,
-    location: String,
-    model: String,
+    url: String,
     messages: Rc<Vec<Content>>,
+    system_message: Rc<Option<Content>>,
     tools: Rc<Vec<Tool>>,
     function_store: FunctionStore,
 }
 
 impl Vertex {
-    pub fn new(endpoint: String, project: String, location: String, model: String, function_store: FunctionStore) -> Self {
+    pub fn new(
+        endpoint: String,
+        project: String,
+        location: String,
+        model: String,
+        system_message: Option<String>,
+        function_store: FunctionStore,
+    ) -> Self {
+        let url = format!("{endpoint}/v1/projects/{project}/locations/{location}/publishers/google/models/{model}:streamGenerateContent");
         Vertex {
-            endpoint,
-            project,
-            location,
-            model,
+            url,
             messages: Rc::new(vec![]),
+            system_message: Rc::new(system_message.map(|message| Content::new_text(Role::Model, message))),
             tools: Rc::new(
                 function_store
                     .declarations
@@ -67,6 +75,23 @@ impl Vertex {
         Ok(())
     }
 
+    pub async fn upload(&mut self, path: &Path, message: String, handler: &dyn ChatHandler) -> Result<(), Exception> {
+        let extension = path
+            .extension()
+            .ok_or_else(|| Exception::new(&format!("file must have extension, path={}", path.to_string_lossy())))?
+            .to_str()
+            .unwrap();
+        let content = fs::read(path)?;
+        let mime_type = match extension {
+            "jpg" => Ok("image/jpeg".to_string()),
+            "pdf" => Ok("application/pdf".to_string()),
+            _ => Err(Exception::new("not supported extension")),
+        }?;
+        self.process(Content::new_inline_data(mime_type, BASE64_STANDARD.encode(content), message), handler)
+            .await?;
+        Ok(())
+    }
+
     async fn process(&mut self, content: Content, handler: &dyn ChatHandler) -> Result<Option<FunctionCall>, Exception> {
         self.add_message(content);
 
@@ -80,21 +105,16 @@ impl Vertex {
 
         let mut model_message = String::new();
         while let Some(response) = rx.recv().await {
-            match response {
-                Ok(response) => {
-                    let part = response.candidates.into_iter().next().unwrap().content.parts.into_iter().next().unwrap();
+            let response = response?;
 
-                    if let Some(function) = part.function_call {
-                        self.add_message(Content::new_function_call(function.clone()));
-                        return Ok(Some(function));
-                    } else if let Some(text) = part.text {
-                        handler.on_event(ChatEvent::Delta(text.clone()));
-                        model_message.push_str(&text);
-                    }
-                }
-                Err(err) => {
-                    return Err(err);
-                }
+            let part = response.candidates.into_iter().next().unwrap().content.parts.into_iter().next().unwrap();
+
+            if let Some(function) = part.function_call {
+                self.add_message(Content::new_function_call(function.clone()));
+                return Ok(Some(function));
+            } else if let Some(text) = part.text {
+                handler.on_event(ChatEvent::Delta(text.clone()));
+                model_message.push_str(&text);
             }
         }
         if !model_message.is_empty() {
@@ -111,14 +131,9 @@ impl Vertex {
     async fn call_api(&self) -> Result<Response, Exception> {
         let has_function = !self.tools.is_empty();
 
-        let endpoint = &self.endpoint;
-        let project = &self.project;
-        let location = &self.location;
-        let model = &self.model;
-        let url = format!("{endpoint}/v1/projects/{project}/locations/{location}/publishers/google/models/{model}:streamGenerateContent");
-
         let request = StreamGenerateContent {
             contents: Rc::clone(&self.messages),
+            system_instruction: Rc::clone(&self.system_message),
             generation_config: GenerationConfig {
                 temperature: 1.0,
                 top_p: 0.95,
@@ -126,14 +141,14 @@ impl Vertex {
             },
             tools: has_function.then(|| Rc::clone(&self.tools)),
         };
-        let response = self.post(&url, &request).await?;
+        let response = self.post(request).await?;
         Ok(response)
     }
 
-    async fn post(&self, url: &str, request: &StreamGenerateContent) -> Result<Response, Exception> {
-        let body = json::to_json(request)?;
+    async fn post(&self, request: StreamGenerateContent) -> Result<Response, Exception> {
+        let body = json::to_json(&request)?;
         let response = http_client::http_client()
-            .post(url)
+            .post(&self.url)
             .bearer_auth(token())
             .header("Content-Type", "application/json")
             .header("Accept", "application/json")
@@ -172,7 +187,6 @@ async fn process_response_stream(response: Response, tx: Sender<Result<GenerateC
                 buffer.clear();
             }
             Err(err) => {
-                // tx.send(InternalEvent::Event(ChatEvent::Error(err.to_string()))).await.unwrap();
                 tx.send(Err(Exception::new(&err.to_string()))).await.unwrap();
                 break;
             }

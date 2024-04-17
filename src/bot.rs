@@ -76,6 +76,13 @@ impl Bot {
             Bot::Vertex(bot) => bot.chat(message, handler).await,
         }
     }
+
+    pub async fn upload(&mut self, path: &Path, message: String, handler: &dyn ChatHandler) -> Result<(), Exception> {
+        match self {
+            Bot::ChatGPT(_bot) => todo!("not impl"),
+            Bot::Vertex(bot) => bot.upload(path, message, handler).await,
+        }
+    }
 }
 
 pub fn load(path: &Path) -> Result<Config, Exception> {

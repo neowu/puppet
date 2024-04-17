@@ -8,6 +8,8 @@ use crate::bot::Function;
 #[derive(Debug, Serialize)]
 pub struct StreamGenerateContent {
     pub contents: Rc<Vec<Content>>,
+    #[serde(rename = "systemInstruction", skip_serializing_if = "Option::is_none")]
+    pub system_instruction: Rc<Option<Content>>,
     #[serde(rename = "generationConfig")]
     pub generation_config: GenerationConfig,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -25,7 +27,8 @@ impl Content {
         Self {
             role,
             parts: vec![Part {
-                text: Some(message.to_string()),
+                text: Some(message),
+                inline_data: None,
                 function_call: None,
                 function_response: None,
             }],
@@ -37,6 +40,7 @@ impl Content {
             role: Role::User,
             parts: vec![Part {
                 text: None,
+                inline_data: None,
                 function_call: None,
                 function_response: Some(FunctionResponse { name, response }),
             }],
@@ -48,9 +52,30 @@ impl Content {
             role: Role::Model,
             parts: vec![Part {
                 text: None,
+                inline_data: None,
                 function_call: Some(function_call),
                 function_response: None,
             }],
+        }
+    }
+
+    pub fn new_inline_data(mime_type: String, data: String, message: String) -> Self {
+        Self {
+            role: Role::User,
+            parts: vec![
+                Part {
+                    text: None,
+                    inline_data: Some(InlineData { mime_type, data }),
+                    function_call: None,
+                    function_response: None,
+                },
+                Part {
+                    text: Some(message),
+                    inline_data: None,
+                    function_call: None,
+                    function_response: None,
+                },
+            ],
         }
     }
 }
@@ -73,6 +98,9 @@ pub enum Role {
 pub struct Part {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inline_data: Option<InlineData>,
+
     #[serde(rename = "functionCall")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub function_call: Option<FunctionCall>,
@@ -88,6 +116,13 @@ pub struct GenerationConfig {
     pub top_p: f32,
     #[serde(rename = "maxOutputTokens")]
     pub max_output_tokens: i32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct InlineData {
+    #[serde(rename = "mimeType")]
+    pub mime_type: String,
+    pub data: String,
 }
 
 #[derive(Debug, Deserialize)]

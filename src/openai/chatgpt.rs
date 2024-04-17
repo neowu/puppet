@@ -27,9 +27,8 @@ use crate::util::http_client;
 use crate::util::json;
 
 pub struct ChatGPT {
-    endpoint: String,
+    url: String,
     api_key: String,
-    model: String,
     messages: Rc<Vec<ChatRequestMessage>>,
     tools: Rc<Vec<Tool>>,
     function_store: FunctionStore,
@@ -43,11 +42,11 @@ enum InternalEvent {
 type FunctionCall = HashMap<i64, (String, String, String)>;
 
 impl ChatGPT {
-    pub fn new(endpoint: String, api_key: String, model: String, system_message: Option<String>, function_store: FunctionStore) -> Self {
+    pub fn new(endpoint: String, model: String, api_key: String, system_message: Option<String>, function_store: FunctionStore) -> Self {
+        let url = format!("{endpoint}/openai/deployments/{model}/chat/completions?api-version=2024-02-01");
         let mut chatgpt = ChatGPT {
-            endpoint,
+            url,
             api_key,
-            model,
             messages: Rc::new(vec![]),
             tools: Rc::new(
                 function_store
@@ -148,13 +147,10 @@ impl ChatGPT {
     where
         Request: Serialize + fmt::Debug,
     {
-        let endpoint = &self.endpoint;
-        let model = &self.model;
-        let url = format!("{endpoint}/openai/deployments/{model}/chat/completions?api-version=2024-02-01");
         let body = json::to_json(&request)?;
 
         let request = http_client::http_client()
-            .post(url)
+            .post(&self.url)
             .header("Content-Type", "application/json")
             .header("api-key", &self.api_key)
             .body(body);

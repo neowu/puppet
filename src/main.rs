@@ -17,12 +17,12 @@ mod util;
 #[command(about = "Puppet AI")]
 pub struct Cli {
     #[command(subcommand)]
-    command: Option<Commands>,
+    command: Option<Command>,
 }
 
 #[derive(Subcommand)]
 #[command(arg_required_else_help(true))]
-pub enum Commands {
+pub enum Command {
     Chat(Chat),
     Server(Server),
     GenerateZshCompletion(GenerateZshCompletion),
@@ -32,10 +32,10 @@ pub enum Commands {
 async fn main() -> Result<(), Exception> {
     tracing_subscriber::fmt::init();
     let cli = Cli::parse();
-    match &cli.command {
-        Some(Commands::GenerateZshCompletion(command)) => command.execute(),
-        Some(Commands::Chat(command)) => command.execute().await,
-        Some(Commands::Server(command)) => command.execute().await,
+    match cli.command {
+        Some(Command::GenerateZshCompletion(command)) => command.execute(),
+        Some(Command::Chat(command)) => command.execute().await,
+        Some(Command::Server(command)) => command.execute().await,
         None => panic!("not implemented"),
     }
 }

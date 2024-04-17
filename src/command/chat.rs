@@ -52,8 +52,12 @@ impl Chat {
             if line == "/quit" {
                 break;
             }
-
-            bot.chat(line, &handler).await?;
+            if line.starts_with("/upload ") {
+                let index = line.find(',').unwrap();
+                bot.upload(Path::new(line[8..index].trim()), line[index..].to_string(), &handler).await?;
+            } else {
+                bot.chat(line, &handler).await?;
+            }
         }
         Ok(())
     }

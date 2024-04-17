@@ -29,9 +29,9 @@ impl Config {
         let bot = match config.r#type {
             BotType::Azure => Bot::ChatGPT(ChatGPT::new(
                 config.endpoint.to_string(),
-                config.params.get("api_key").unwrap().to_string(),
                 config.params.get("model").unwrap().to_string(),
-                Option::None,
+                config.params.get("api_key").unwrap().to_string(),
+                config.system_message.clone(),
                 function_store,
             )),
             BotType::GCloud => Bot::Vertex(Vertex::new(
@@ -39,6 +39,7 @@ impl Config {
                 config.params.get("project").unwrap().to_string(),
                 config.params.get("location").unwrap().to_string(),
                 config.params.get("model").unwrap().to_string(),
+                config.system_message.clone(),
                 function_store,
             )),
         };
@@ -51,6 +52,7 @@ impl Config {
 pub struct BotConfig {
     pub endpoint: String,
     pub r#type: BotType,
+    pub system_message: Option<String>,
     pub params: HashMap<String, String>,
     pub functions: Vec<String>,
 }
