@@ -197,6 +197,7 @@ async fn process_event_source(mut source: EventSource, tx: Sender<InternalEvent>
     if !function_calls.is_empty() {
         tx.send(InternalEvent::FunctionCall(function_calls)).await.unwrap();
     } else {
+        // chatgpt doesn't support token usage with stream mode
         tx.send(InternalEvent::Event(ChatEvent::End(Usage::default()))).await.unwrap();
     }
 }

@@ -52,15 +52,9 @@ impl Vertex {
             url,
             messages: Rc::new(vec![]),
             system_message: Rc::new(system_message.map(|message| Content::new_text(Role::Model, message))),
-            tools: Rc::new(
-                function_store
-                    .declarations
-                    .iter()
-                    .map(|f| Tool {
-                        function_declarations: vec![f.clone()],
-                    })
-                    .collect(),
-            ),
+            tools: Rc::new(vec![Tool {
+                function_declarations: function_store.declarations.to_vec(),
+            }]),
             function_store,
             data: vec![],
             usage: Usage::default(),
@@ -164,6 +158,7 @@ impl Vertex {
 
     async fn post(&self, request: StreamGenerateContent) -> Result<Response, Exception> {
         let body = json::to_json(&request)?;
+        info!("body={body}");
         let response = http_client::http_client()
             .post(&self.url)
             .bearer_auth(token())

@@ -13,7 +13,8 @@ use crate::util::exception::Exception;
 pub struct Function {
     pub name: String,
     pub description: String,
-    pub parameters: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parameters: Option<serde_json::Value>,
 }
 
 pub type FunctionImplementation = dyn Fn(serde_json::Value) -> serde_json::Value + Send + Sync;

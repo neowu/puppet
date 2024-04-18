@@ -70,7 +70,7 @@ fn load_function_store(config: &BotConfig) -> FunctionStore {
                 Function {
                     name: "get_random_number".to_string(),
                     description: "generate random number".to_string(),
-                    parameters: serde_json::json!({
+                    parameters: Some(serde_json::json!({
                         "type": "object",
                         "properties": {
                           "max": {
@@ -79,7 +79,7 @@ fn load_function_store(config: &BotConfig) -> FunctionStore {
                           },
                         },
                         "required": ["max"]
-                    }),
+                    })),
                 },
                 Box::new(|request| {
                     let max = request.get("max").unwrap().as_i64().unwrap();
@@ -88,6 +88,42 @@ fn load_function_store(config: &BotConfig) -> FunctionStore {
                     json!({
                         "success": true,
                         "result": result
+                    })
+                }),
+            );
+        }
+        if let "close_door" = function.as_str() {
+            function_store.add(
+                Function {
+                    name: "close_door".to_string(),
+                    description: "close door of home".to_string(),
+                    parameters: None,
+                },
+                Box::new(|_request| {
+                    json!({
+                        "success": true
+                    })
+                }),
+            );
+        }
+        if let "close_window" = function.as_str() {
+            function_store.add(
+                Function {
+                    name: "close_window".to_string(),
+                    description: "close window of home with id".to_string(),
+                    parameters: Some(serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "id": {
+                                "type": "string",
+                                "description": "id of window"
+                            }
+                        }
+                    })),
+                },
+                Box::new(|_request| {
+                    json!({
+                        "success": true
                     })
                 }),
             );
