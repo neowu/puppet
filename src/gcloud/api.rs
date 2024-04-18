@@ -3,7 +3,7 @@ use std::rc::Rc;
 use serde::Deserialize;
 use serde::Serialize;
 
-use crate::bot::Function;
+use crate::bot::function::Function;
 
 #[derive(Debug, Serialize)]
 pub struct StreamGenerateContent {
@@ -59,24 +59,26 @@ impl Content {
         }
     }
 
-    pub fn new_inline_data(mime_type: String, data: String, message: String) -> Self {
-        Self {
-            role: Role::User,
-            parts: vec![
-                Part {
+    pub fn new_text_with_inline_data(message: String, data: Vec<InlineData>) -> Self {
+        let mut parts: Vec<Part> = vec![];
+        parts.append(
+            &mut data
+                .into_iter()
+                .map(|d| Part {
                     text: None,
-                    inline_data: Some(InlineData { mime_type, data }),
+                    inline_data: Some(d),
                     function_call: None,
                     function_response: None,
-                },
-                Part {
-                    text: Some(message),
-                    inline_data: None,
-                    function_call: None,
-                    function_response: None,
-                },
-            ],
-        }
+                })
+                .collect(),
+        );
+        parts.push(Part {
+            text: Some(message),
+            inline_data: None,
+            function_call: None,
+            function_response: None,
+        });
+        Self { role: Role::User, parts }
     }
 }
 
@@ -128,6 +130,8 @@ pub struct InlineData {
 #[derive(Debug, Deserialize)]
 pub struct GenerateContentResponse {
     pub candidates: Vec<Candidate>,
+    #[serde(rename = "usageMetadata")]
+    pub usage_metadata: Option<UsageMetadata>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -145,4 +149,12 @@ pub struct FunctionCall {
 pub struct FunctionResponse {
     pub name: String,
     pub response: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UsageMetadata {
+    #[serde(rename = "promptTokenCount")]
+    pub prompt_token_count: i32,
+    #[serde(rename = "candidatesTokenCount")]
+    pub candidates_token_count: i32,
 }

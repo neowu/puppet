@@ -3,7 +3,6 @@ use clap::Subcommand;
 use command::chat::Chat;
 use command::generate_zsh_completion::GenerateZshCompletion;
 use command::server::Server;
-
 use util::exception::Exception;
 
 mod bot;

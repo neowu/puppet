@@ -1,30 +1,32 @@
+use std::env;
+use std::fs;
+use std::mem;
+use std::path::Path;
+use std::rc::Rc;
+
 use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
 use futures::StreamExt;
 use reqwest::Response;
 use tokio::sync::mpsc::channel;
 use tokio::sync::mpsc::Sender;
-
-use std::env;
-use std::fs;
-use std::path::Path;
-use std::rc::Rc;
-
-use crate::bot::ChatEvent;
-use crate::bot::ChatHandler;
-
-use crate::bot::FunctionStore;
-use crate::gcloud::api::GenerateContentResponse;
-use crate::util::exception::Exception;
-use crate::util::http_client;
-use crate::util::json;
+use tracing::info;
 
 use super::api::Content;
 use super::api::FunctionCall;
 use super::api::GenerationConfig;
+use super::api::InlineData;
 use super::api::Role;
 use super::api::StreamGenerateContent;
 use super::api::Tool;
+use crate::bot::function::FunctionStore;
+use crate::bot::ChatEvent;
+use crate::bot::ChatHandler;
+use crate::bot::Usage;
+use crate::gcloud::api::GenerateContentResponse;
+use crate::util::exception::Exception;
+use crate::util::http_client;
+use crate::util::json;
 
 pub struct Vertex {
     url: String,
@@ -32,6 +34,8 @@ pub struct Vertex {
     system_message: Rc<Option<Content>>,
     tools: Rc<Vec<Tool>>,
     function_store: FunctionStore,
+    data: Vec<InlineData>,
+    usage: Usage,
 }
 
 impl Vertex {
@@ -58,24 +62,24 @@ impl Vertex {
                     .collect(),
             ),
             function_store,
+            data: vec![],
+            usage: Usage::default(),
         }
     }
 
     pub async fn chat(&mut self, message: String, handler: &dyn ChatHandler) -> Result<(), Exception> {
-        let mut result = self.process(Content::new_text(Role::User, message), handler).await?;
+        let data = mem::take(&mut self.data);
+        let mut result = self.process(Content::new_text_with_inline_data(message, data), handler).await?;
 
         while let Some(function_call) = result {
-            let function = self.function_store.get(&function_call.name)?;
-
-            let function_response = tokio::spawn(async move { function(function_call.args) }).await?;
-
+            let function_response = self.function_store.call_function(&function_call.name, function_call.args).await?;
             let content = Content::new_function_response(function_call.name, function_response);
             result = self.process(content, handler).await?;
         }
         Ok(())
     }
 
-    pub async fn data(&mut self, path: &Path, message: String, handler: &dyn ChatHandler) -> Result<(), Exception> {
+    pub fn file(&mut self, path: &Path) -> Result<(), Exception> {
         let extension = path
             .extension()
             .ok_or_else(|| Exception::new(format!("file must have extension, path={}", path.to_string_lossy())))?
@@ -88,8 +92,14 @@ impl Vertex {
             "pdf" => Ok("application/pdf".to_string()),
             _ => Err(Exception::new(format!("not supported extension, path={}", path.to_string_lossy()))),
         }?;
-        self.process(Content::new_inline_data(mime_type, BASE64_STANDARD.encode(content), message), handler)
-            .await?;
+        info!(
+            "file added, will submit with next message, mime_type={mime_type}, path={}",
+            path.to_string_lossy()
+        );
+        self.data.push(InlineData {
+            mime_type,
+            data: BASE64_STANDARD.encode(content),
+        });
         Ok(())
     }
 
@@ -108,6 +118,11 @@ impl Vertex {
         while let Some(response) = rx.recv().await {
             let response = response?;
 
+            if let Some(usage) = response.usage_metadata {
+                self.usage.request_tokens += usage.prompt_token_count;
+                self.usage.response_tokens += usage.candidates_token_count;
+            }
+
             let part = response.candidates.into_iter().next().unwrap().content.parts.into_iter().next().unwrap();
 
             if let Some(function) = part.function_call {
@@ -121,7 +136,8 @@ impl Vertex {
         if !model_message.is_empty() {
             self.add_message(Content::new_text(Role::Model, model_message));
         }
-        handler.on_event(ChatEvent::End);
+        let usage = mem::take(&mut self.usage);
+        handler.on_event(ChatEvent::End(usage));
         Ok(None)
     }
 

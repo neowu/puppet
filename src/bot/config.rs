@@ -1,16 +1,15 @@
 use std::collections::HashMap;
 
-use crate::bot::Bot;
-use crate::bot::Function;
-use crate::gcloud::vertex::Vertex;
-use crate::openai::chatgpt::ChatGPT;
-use crate::util::exception::Exception;
 use rand::Rng;
 use serde::Deserialize;
 use serde_json::json;
-use tracing::info;
 
-use super::FunctionStore;
+use crate::bot::function::Function;
+use crate::bot::function::FunctionStore;
+use crate::bot::Bot;
+use crate::gcloud::vertex::Vertex;
+use crate::openai::chatgpt::ChatGPT;
+use crate::util::exception::Exception;
 
 #[derive(Deserialize, Debug)]
 pub struct Config {
@@ -83,7 +82,6 @@ fn load_function_store(config: &BotConfig) -> FunctionStore {
                     }),
                 },
                 Box::new(|request| {
-                    info!("call get_random_number, request={request}");
                     let max = request.get("max").unwrap().as_i64().unwrap();
                     let mut rng = rand::thread_rng();
                     let result = rng.gen_range(0..max);

@@ -4,11 +4,11 @@ use std::io::Write;
 use std::path::Path;
 
 use clap::Args;
+use tracing::info;
 
 use crate::bot;
 use crate::bot::ChatEvent;
 use crate::bot::ChatHandler;
-
 use crate::util::exception::Exception;
 
 #[derive(Args)]
@@ -26,14 +26,18 @@ struct ConsoleHandler;
 impl ChatHandler for ConsoleHandler {
     fn on_event(&self, event: ChatEvent) {
         match event {
-            ChatEvent::Delta(ref data) => {
-                print_flush(data).unwrap();
+            ChatEvent::Delta(data) => {
+                print_flush(&data).unwrap();
             }
             ChatEvent::Error(error) => {
                 println!("Error: {}", error);
             }
-            ChatEvent::End => {
+            ChatEvent::End(usage) => {
                 println!();
+                info!(
+                    "usage, request_tokens={}, response_tokens={}",
+                    usage.request_tokens, usage.response_tokens
+                );
             }
         }
     }
@@ -52,10 +56,8 @@ impl Chat {
             if line == "/quit" {
                 break;
             }
-            if line.starts_with("/data ") {
-                let index = line.find(',').unwrap();
-                bot.data(Path::new(line[6..index].trim()), line[(index + 1)..].to_string(), &handler)
-                    .await?;
+            if line.starts_with("/file ") {
+                bot.file(Path::new(line.strip_prefix("/file ").unwrap()))?;
             } else {
                 bot.chat(line, &handler).await?;
             }

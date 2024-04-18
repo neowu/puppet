@@ -1,9 +1,7 @@
 use std::collections::HashMap;
-
 use std::fmt;
 use std::rc::Rc;
 
-use futures::future::join_all;
 use futures::stream::StreamExt;
 use reqwest_eventsource::CannotCloneRequestError;
 use reqwest_eventsource::Event;
@@ -11,12 +9,11 @@ use reqwest_eventsource::EventSource;
 use serde::Serialize;
 use tokio::sync::mpsc::channel;
 use tokio::sync::mpsc::Sender;
-use tokio::task::JoinHandle;
 
+use crate::bot::function::FunctionStore;
 use crate::bot::ChatEvent;
 use crate::bot::ChatHandler;
-
-use crate::bot::FunctionStore;
+use crate::bot::Usage;
 use crate::openai::api::ChatRequest;
 use crate::openai::api::ChatRequestMessage;
 use crate::openai::api::ChatResponse;
@@ -70,20 +67,15 @@ impl ChatGPT {
         self.add_message(ChatRequestMessage::new_message(Role::User, message));
         let result = self.process(handler).await;
         if let Ok(Some(InternalEvent::FunctionCall(calls))) = result {
-            let handles: Result<Vec<JoinHandle<_>>, _> = calls
+            let functions = calls
                 .into_iter()
-                .map(|(_, (id, name, args))| {
-                    let function = self.function_store.get(&name)?;
-                    Ok::<JoinHandle<_>, Exception>(tokio::spawn(async move { (id, function(json::from_json(&args).unwrap())) }))
-                })
+                .map(|(_, (id, name, args))| (id, name, json::from_json(&args).unwrap()))
                 .collect();
-
-            let results: Result<Vec<_>, _> = join_all(handles?).await.into_iter().collect();
-            for result in results? {
-                let function_message = ChatRequestMessage::new_function_response(result.0, json::to_json(&result.1)?);
-                self.add_message(function_message);
+            let results = self.function_store.call_functions(functions).await?;
+            for result in results {
+                let function_response = ChatRequestMessage::new_function_response(result.0, json::to_json(&result.1)?);
+                self.add_message(function_response);
             }
-
             self.process(handler).await?;
         }
         Ok(())
@@ -205,6 +197,6 @@ async fn process_event_source(mut source: EventSource, tx: Sender<InternalEvent>
     if !function_calls.is_empty() {
         tx.send(InternalEvent::FunctionCall(function_calls)).await.unwrap();
     } else {
-        tx.send(InternalEvent::Event(ChatEvent::End)).await.unwrap();
+        tx.send(InternalEvent::Event(ChatEvent::End(Usage::default()))).await.unwrap();
     }
 }

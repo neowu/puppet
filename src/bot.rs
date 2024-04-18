@@ -1,19 +1,17 @@
-use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use std::sync::Arc;
 
-use serde::Serialize;
 use tracing::info;
+use tracing::warn;
 
+use self::config::Config;
 use crate::gcloud::vertex::Vertex;
 use crate::openai::chatgpt::ChatGPT;
 use crate::util::exception::Exception;
 use crate::util::json;
 
-use self::config::Config;
-
 pub mod config;
+pub mod function;
 
 pub trait ChatHandler {
     fn on_event(&self, event: ChatEvent);
@@ -22,46 +20,13 @@ pub trait ChatHandler {
 pub enum ChatEvent {
     Delta(String),
     Error(String),
-    End,
+    End(Usage),
 }
 
-// both openai and gemini shares same openai schema
-#[derive(Debug, Serialize, Clone)]
-pub struct Function {
-    pub name: String,
-    pub description: String,
-    pub parameters: serde_json::Value,
-}
-
-pub type FunctionImplementation = dyn Fn(serde_json::Value) -> serde_json::Value + Send + Sync;
-
-pub struct FunctionStore {
-    pub declarations: Vec<Function>,
-    pub implementations: HashMap<String, Arc<Box<FunctionImplementation>>>,
-}
-
-impl FunctionStore {
-    pub fn new() -> Self {
-        FunctionStore {
-            declarations: vec![],
-            implementations: HashMap::new(),
-        }
-    }
-
-    pub fn add(&mut self, function: Function, implementation: Box<FunctionImplementation>) {
-        let name = function.name.to_string();
-        self.declarations.push(function);
-        self.implementations.insert(name, Arc::new(implementation));
-    }
-
-    pub fn get(&self, name: &str) -> Result<Arc<Box<FunctionImplementation>>, Exception> {
-        let function = Arc::clone(
-            self.implementations
-                .get(name)
-                .ok_or_else(|| Exception::new(format!("function not found, name={name}")))?,
-        );
-        Ok(function)
-    }
+#[derive(Default)]
+pub struct Usage {
+    pub request_tokens: i32,
+    pub response_tokens: i32,
 }
 
 pub enum Bot {
@@ -77,10 +42,13 @@ impl Bot {
         }
     }
 
-    pub async fn data(&mut self, path: &Path, message: String, handler: &dyn ChatHandler) -> Result<(), Exception> {
+    pub fn file(&mut self, path: &Path) -> Result<(), Exception> {
         match self {
-            Bot::ChatGPT(_bot) => todo!("not impl"),
-            Bot::Vertex(bot) => bot.data(path, message, handler).await,
+            Bot::ChatGPT(_bot) => {
+                warn!("ChatGPT does not support uploading file");
+                Ok(())
+            }
+            Bot::Vertex(bot) => bot.file(path),
         }
     }
 }
