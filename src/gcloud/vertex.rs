@@ -104,9 +104,7 @@ impl Vertex {
 
         let (tx, mut rx) = channel(64);
 
-        tokio::spawn(async move {
-            process_response_stream(response, tx).await;
-        });
+        tokio::spawn(process_response_stream(response, tx));
 
         let mut model_message = String::new();
         while let Some(response) = rx.recv().await {
@@ -119,12 +117,12 @@ impl Vertex {
 
             let part = response.candidates.into_iter().next().unwrap().content.parts.into_iter().next().unwrap();
 
-            if let Some(function) = part.function_call {
-                self.add_message(Content::new_function_call(function.clone()));
-                return Ok(Some(function));
+            if let Some(function_call) = part.function_call {
+                self.add_message(Content::new_function_call(function_call.clone()));
+                return Ok(Some(function_call));
             } else if let Some(text) = part.text {
-                handler.on_event(ChatEvent::Delta(text.clone()));
                 model_message.push_str(&text);
+                handler.on_event(ChatEvent::Delta(text));
             }
         }
         if !model_message.is_empty() {
@@ -158,7 +156,7 @@ impl Vertex {
 
     async fn post(&self, request: StreamGenerateContent) -> Result<Response, Exception> {
         let body = json::to_json(&request)?;
-        info!("body={body}");
+        // info!("body={body}");
         let response = http_client::http_client()
             .post(&self.url)
             .bearer_auth(token())

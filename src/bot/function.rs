@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use futures::future::join_all;
+use futures::future::try_join_all;
 use serde::Serialize;
-use tokio::task::JoinHandle;
 use tracing::info;
 
 use crate::util::exception::Exception;
@@ -46,25 +45,23 @@ impl FunctionStore {
     }
 
     pub async fn call_functions(&self, functions: Vec<(String, String, serde_json::Value)>) -> Result<Vec<(String, serde_json::Value)>, Exception> {
-        let handles: Result<Vec<JoinHandle<_>>, _> = functions
-            .into_iter()
-            .map(|(id, name, args)| {
+        let mut handles = vec![];
+        for (id, name, args) in functions {
+            let function = self.get(&name)?;
+            handles.push(tokio::spawn(async move {
                 info!("call function, id={id}, name={name}, args={args}");
-                let function = self.get(&name)?;
-                Ok::<JoinHandle<_>, Exception>(tokio::spawn(async move { (id, function(args)) }))
-            })
-            .collect();
-
-        let results = join_all(handles?).await.into_iter().collect::<Result<Vec<_>, _>>()?;
+                (id, function(args))
+            }));
+        }
+        let results = try_join_all(handles).await?;
         Ok(results)
     }
 
     fn get(&self, name: &str) -> Result<Arc<Box<FunctionImplementation>>, Exception> {
-        let function = Arc::clone(
-            self.implementations
-                .get(name)
-                .ok_or_else(|| Exception::new(format!("function not found, name={name}")))?,
-        );
-        Ok(function)
+        let function = self
+            .implementations
+            .get(name)
+            .ok_or_else(|| Exception::new(format!("function not found, name={name}")))?;
+        Ok(Arc::clone(function))
     }
 }
