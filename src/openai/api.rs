@@ -20,7 +20,7 @@ pub struct ChatRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tools: Option<Rc<Vec<Tool>>>,
+    pub tools: Option<Rc<[Tool]>>,
 }
 
 #[derive(Debug, Serialize)]

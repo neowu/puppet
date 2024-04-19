@@ -1,6 +1,7 @@
 use std::env;
 use std::fs;
 use std::mem;
+use std::ops::Not;
 use std::path::Path;
 use std::rc::Rc;
 
@@ -31,8 +32,8 @@ use crate::util::json;
 pub struct Vertex {
     url: String,
     messages: Rc<Vec<Content>>,
-    system_message: Rc<Option<Content>>,
-    tools: Rc<Vec<Tool>>,
+    system_message: Option<Rc<Content>>,
+    tools: Option<Rc<[Tool]>>,
     function_store: FunctionStore,
     data: Vec<InlineData>,
     usage: Usage,
@@ -51,17 +52,17 @@ impl Vertex {
         Vertex {
             url,
             messages: Rc::new(vec![]),
-            system_message: Rc::new(system_message.map(|message| Content::new_text(Role::Model, message))),
-            tools: Rc::new(vec![Tool {
+            system_message: system_message.map(|message| Rc::new(Content::new_text(Role::Model, message))),
+            tools: function_store.declarations.is_empty().not().then_some(Rc::from(vec![Tool {
                 function_declarations: function_store.declarations.to_vec(),
-            }]),
+            }])),
             function_store,
             data: vec![],
             usage: Usage::default(),
         }
     }
 
-    pub async fn chat(&mut self, message: String, handler: &dyn ChatHandler) -> Result<(), Exception> {
+    pub async fn chat(&mut self, message: String, handler: &impl ChatHandler) -> Result<(), Exception> {
         let data = mem::take(&mut self.data);
         let mut result = self.process(Content::new_text_with_inline_data(message, data), handler).await?;
 
@@ -97,7 +98,7 @@ impl Vertex {
         Ok(())
     }
 
-    async fn process(&mut self, content: Content, handler: &dyn ChatHandler) -> Result<Option<FunctionCall>, Exception> {
+    async fn process(&mut self, content: Content, handler: &impl ChatHandler) -> Result<Option<FunctionCall>, Exception> {
         self.add_message(content);
 
         let response = self.call_api().await?;
@@ -138,23 +139,17 @@ impl Vertex {
     }
 
     async fn call_api(&self) -> Result<Response, Exception> {
-        let has_function = !self.tools.is_empty();
-
         let request = StreamGenerateContent {
             contents: Rc::clone(&self.messages),
-            system_instruction: Rc::clone(&self.system_message),
+            system_instruction: self.system_message.clone(),
             generation_config: GenerationConfig {
                 temperature: 1.0,
                 top_p: 0.95,
                 max_output_tokens: 2048,
             },
-            tools: has_function.then(|| Rc::clone(&self.tools)),
+            tools: self.tools.clone(),
         };
-        let response = self.post(request).await?;
-        Ok(response)
-    }
 
-    async fn post(&self, request: StreamGenerateContent) -> Result<Response, Exception> {
         let body = json::to_json(&request)?;
         // info!("body={body}");
         let response = http_client::http_client()
@@ -174,6 +169,7 @@ impl Vertex {
                 response.text().await?
             )));
         }
+
         Ok(response)
     }
 }

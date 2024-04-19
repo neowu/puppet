@@ -9,11 +9,11 @@ use crate::bot::function::Function;
 pub struct StreamGenerateContent {
     pub contents: Rc<Vec<Content>>,
     #[serde(rename = "systemInstruction", skip_serializing_if = "Option::is_none")]
-    pub system_instruction: Rc<Option<Content>>,
+    pub system_instruction: Option<Rc<Content>>,
     #[serde(rename = "generationConfig")]
     pub generation_config: GenerationConfig,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tools: Option<Rc<Vec<Tool>>>,
+    pub tools: Option<Rc<[Tool]>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

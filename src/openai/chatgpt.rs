@@ -1,12 +1,11 @@
 use std::collections::HashMap;
-use std::fmt;
+use std::ops::Not;
 use std::rc::Rc;
 
 use futures::stream::StreamExt;
 use reqwest_eventsource::CannotCloneRequestError;
 use reqwest_eventsource::Event;
 use reqwest_eventsource::EventSource;
-use serde::Serialize;
 use tokio::sync::mpsc::channel;
 use tokio::sync::mpsc::Sender;
 
@@ -27,7 +26,7 @@ pub struct ChatGPT {
     url: String,
     api_key: String,
     messages: Rc<Vec<ChatRequestMessage>>,
-    tools: Rc<Vec<Tool>>,
+    tools: Option<Rc<[Tool]>>,
     function_store: FunctionStore,
 }
 
@@ -41,20 +40,21 @@ type FunctionCall = HashMap<i64, (String, String, String)>;
 impl ChatGPT {
     pub fn new(endpoint: String, model: String, api_key: String, system_message: Option<String>, function_store: FunctionStore) -> Self {
         let url = format!("{endpoint}/openai/deployments/{model}/chat/completions?api-version=2024-02-01");
+        let tools: Option<Rc<[Tool]>> = function_store.declarations.is_empty().not().then_some(
+            function_store
+                .declarations
+                .iter()
+                .map(|f| Tool {
+                    r#type: "function".to_string(),
+                    function: f.clone(),
+                })
+                .collect(),
+        );
         let mut chatgpt = ChatGPT {
             url,
             api_key,
             messages: Rc::new(vec![]),
-            tools: Rc::new(
-                function_store
-                    .declarations
-                    .iter()
-                    .map(|f| Tool {
-                        r#type: "function".to_string(),
-                        function: f.clone(),
-                    })
-                    .collect(),
-            ),
+            tools,
             function_store,
         };
         if let Some(message) = system_message {
@@ -63,14 +63,14 @@ impl ChatGPT {
         chatgpt
     }
 
-    pub async fn chat(&mut self, message: String, handler: &dyn ChatHandler) -> Result<(), Exception> {
+    pub async fn chat(&mut self, message: String, handler: &impl ChatHandler) -> Result<(), Exception> {
         self.add_message(ChatRequestMessage::new_message(Role::User, message));
         let result = self.process(handler).await;
         if let Ok(Some(InternalEvent::FunctionCall(calls))) = result {
-            let functions = calls
-                .into_iter()
-                .map(|(_, (id, name, args))| (id, name, json::from_json(&args).unwrap()))
-                .collect();
+            let mut functions = Vec::with_capacity(calls.len());
+            for (_, (id, name, args)) in calls {
+                functions.push((id, name, json::from_json::<serde_json::Value>(&args)?))
+            }
             let results = self.function_store.call_functions(functions).await?;
             for result in results {
                 let function_response = ChatRequestMessage::new_function_response(result.0, json::to_json(&result.1)?);
@@ -85,7 +85,7 @@ impl ChatGPT {
         Rc::get_mut(&mut self.messages).unwrap().push(message);
     }
 
-    async fn process(&mut self, handler: &dyn ChatHandler) -> Result<Option<InternalEvent>, Exception> {
+    async fn process(&mut self, handler: &impl ChatHandler) -> Result<Option<InternalEvent>, Exception> {
         let source = self.call_api().await?;
 
         let (tx, mut rx) = channel(64);
@@ -117,8 +117,6 @@ impl ChatGPT {
     }
 
     async fn call_api(&mut self) -> Result<EventSource, Exception> {
-        let has_function = !self.tools.is_empty();
-
         let request = ChatRequest {
             messages: Rc::clone(&self.messages),
             temperature: 0.8,
@@ -128,19 +126,11 @@ impl ChatGPT {
             max_tokens: 800,
             presence_penalty: 0.0,
             frequency_penalty: 0.0,
-            tool_choice: has_function.then(|| "auto".to_string()),
-            tools: has_function.then(|| Rc::clone(&self.tools)),
+            tool_choice: self.tools.is_some().then_some("auto".to_string()),
+            tools: self.tools.clone(),
         };
-        let source = self.post_sse(&request).await?;
-        Ok(source)
-    }
 
-    async fn post_sse<Request>(&self, request: &Request) -> Result<EventSource, Exception>
-    where
-        Request: Serialize + fmt::Debug,
-    {
         let body = json::to_json(&request)?;
-
         let request = http_client::http_client()
             .post(&self.url)
             .header("Content-Type", "application/json")

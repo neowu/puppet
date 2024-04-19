@@ -35,7 +35,7 @@ pub enum Bot {
 }
 
 impl Bot {
-    pub async fn chat(&mut self, message: String, handler: &dyn ChatHandler) -> Result<(), Exception> {
+    pub async fn chat(&mut self, message: String, handler: &impl ChatHandler) -> Result<(), Exception> {
         match self {
             Bot::ChatGPT(bot) => bot.chat(message, handler).await,
             Bot::Vertex(bot) => bot.chat(message, handler).await,
