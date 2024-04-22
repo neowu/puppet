@@ -7,6 +7,7 @@ use reqwest_eventsource::CannotCloneRequestError;
 use reqwest_eventsource::Event;
 use reqwest_eventsource::EventSource;
 use tokio::sync::mpsc::channel;
+use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::Sender;
 
 use crate::bot::function::FunctionStore;
@@ -65,12 +66,15 @@ impl ChatGPT {
 
     pub async fn chat(&mut self, message: String, handler: &impl ChatHandler) -> Result<(), Exception> {
         self.add_message(ChatRequestMessage::new_message(Role::User, message));
-        let result = self.process(handler).await;
-        if let Ok(Some(InternalEvent::FunctionCall(calls))) = result {
+        let result = self.process(handler).await?;
+        if let Some(calls) = result {
+            self.add_message(ChatRequestMessage::new_function_call(&calls));
+
             let mut functions = Vec::with_capacity(calls.len());
             for (_, (id, name, args)) in calls {
                 functions.push((id, name, json::from_json::<serde_json::Value>(&args)?))
             }
+
             let results = self.function_store.call_functions(functions).await?;
             for result in results {
                 let function_response = ChatRequestMessage::new_function_response(result.0, json::to_json(&result.1)?);
@@ -85,14 +89,19 @@ impl ChatGPT {
         Rc::get_mut(&mut self.messages).unwrap().push(message);
     }
 
-    async fn process(&mut self, handler: &impl ChatHandler) -> Result<Option<InternalEvent>, Exception> {
+    async fn process(&mut self, handler: &impl ChatHandler) -> Result<Option<FunctionCall>, Exception> {
         let source = self.call_api().await?;
 
-        let (tx, mut rx) = channel(64);
-        tokio::spawn(async move {
-            process_event_source(source, tx).await;
-        });
+        let (tx, rx) = channel(64);
+        let handle = tokio::spawn(read_event_source(source, tx));
 
+        let function_call = self.process_event(rx, handler).await;
+        let _ = tokio::try_join!(handle)?;
+
+        Ok(function_call)
+    }
+
+    async fn process_event(&mut self, mut rx: Receiver<InternalEvent>, handler: &impl ChatHandler) -> Option<FunctionCall> {
         let mut assistant_message = String::new();
         while let Some(event) = rx.recv().await {
             match event {
@@ -103,17 +112,14 @@ impl ChatGPT {
                     handler.on_event(event);
                 }
                 InternalEvent::FunctionCall(calls) => {
-                    self.add_message(ChatRequestMessage::new_function_call(&calls));
-                    return Ok(Some(InternalEvent::FunctionCall(calls)));
+                    return Some(calls);
                 }
             }
         }
-
         if !assistant_message.is_empty() {
             self.add_message(ChatRequestMessage::new_message(Role::Assistant, assistant_message));
         }
-
-        Ok(None)
+        None
     }
 
     async fn call_api(&mut self) -> Result<EventSource, Exception> {
@@ -147,7 +153,7 @@ impl From<CannotCloneRequestError> for Exception {
     }
 }
 
-async fn process_event_source(mut source: EventSource, tx: Sender<InternalEvent>) {
+async fn read_event_source(mut source: EventSource, tx: Sender<InternalEvent>) -> Result<(), Exception> {
     let mut function_calls: FunctionCall = HashMap::new();
     while let Some(event) = source.next().await {
         match event {
@@ -160,34 +166,34 @@ async fn process_event_source(mut source: EventSource, tx: Sender<InternalEvent>
                     break;
                 }
 
-                let response: ChatResponse = json::from_json(&data).unwrap();
-                if response.choices.is_empty() {
-                    continue;
-                }
+                let response: ChatResponse = json::from_json(&data)?;
 
-                let choice = response.choices.first().unwrap();
-                let delta = choice.delta.as_ref().unwrap();
+                if let Some(choice) = response.choices.into_iter().next() {
+                    let delta = choice.delta.unwrap();
 
-                if let Some(tool_calls) = delta.tool_calls.as_ref() {
-                    let call = tool_calls.first().unwrap();
-                    if let Some(name) = &call.function.name {
-                        function_calls.insert(call.index, (call.id.as_ref().unwrap().to_string(), name.to_string(), String::new()));
+                    if let Some(tool_calls) = delta.tool_calls {
+                        let call = tool_calls.into_iter().next().unwrap();
+                        if let Some(name) = call.function.name {
+                            function_calls.insert(call.index, (call.id.unwrap(), name, String::new()));
+                        }
+                        function_calls.get_mut(&call.index).unwrap().2.push_str(&call.function.arguments)
+                    } else if let Some(value) = delta.content {
+                        tx.send(InternalEvent::Event(ChatEvent::Delta(value))).await?;
                     }
-                    function_calls.get_mut(&call.index).unwrap().2.push_str(&call.function.arguments)
-                } else if let Some(value) = delta.content.as_ref() {
-                    tx.send(InternalEvent::Event(ChatEvent::Delta(value.to_string()))).await.unwrap();
                 }
             }
             Err(err) => {
-                tx.send(InternalEvent::Event(ChatEvent::Error(err.to_string()))).await.unwrap();
                 source.close();
+                return Err(Exception::new(err.to_string()));
             }
         }
     }
     if !function_calls.is_empty() {
-        tx.send(InternalEvent::FunctionCall(function_calls)).await.unwrap();
+        tx.send(InternalEvent::FunctionCall(function_calls)).await?;
     } else {
         // chatgpt doesn't support token usage with stream mode
-        tx.send(InternalEvent::Event(ChatEvent::End(Usage::default()))).await.unwrap();
+        tx.send(InternalEvent::Event(ChatEvent::End(Usage::default()))).await?;
     }
+
+    Ok(())
 }

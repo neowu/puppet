@@ -10,6 +10,7 @@ use base64::Engine;
 use futures::StreamExt;
 use reqwest::Response;
 use tokio::sync::mpsc::channel;
+use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::Sender;
 use tracing::info;
 
@@ -67,7 +68,7 @@ impl Vertex {
         let mut result = self.process(Content::new_text_with_inline_data(message, data), handler).await?;
 
         while let Some(function_call) = result {
-            let function_response = self.function_store.call_function(&function_call.name, function_call.args).await?;
+            let function_response = self.function_store.call_function(function_call.name.clone(), function_call.args).await?;
             let content = Content::new_function_response(function_call.name, function_response);
             result = self.process(content, handler).await?;
         }
@@ -103,35 +104,52 @@ impl Vertex {
 
         let response = self.call_api().await?;
 
-        let (tx, mut rx) = channel(64);
+        let (tx, rx) = channel(64);
+        let handle = tokio::spawn(read_response_stream(response, tx));
+        let function_call = self.process_response(rx, handler).await;
+        let _ = tokio::try_join!(handle)?;
 
-        tokio::spawn(process_response_stream(response, tx));
+        Ok(function_call)
+    }
 
+    async fn process_response(&mut self, mut rx: Receiver<GenerateContentResponse>, handler: &impl ChatHandler) -> Option<FunctionCall> {
         let mut model_message = String::new();
         while let Some(response) = rx.recv().await {
-            let response = response?;
-
             if let Some(usage) = response.usage_metadata {
                 self.usage.request_tokens += usage.prompt_token_count;
                 self.usage.response_tokens += usage.candidates_token_count;
             }
 
-            let part = response.candidates.into_iter().next().unwrap().content.parts.into_iter().next().unwrap();
+            let candidate = response.candidates.into_iter().next().unwrap();
+            match candidate.content {
+                Some(content) => {
+                    let part = content.parts.into_iter().next().unwrap();
 
-            if let Some(function_call) = part.function_call {
-                self.add_message(Content::new_function_call(function_call.clone()));
-                return Ok(Some(function_call));
-            } else if let Some(text) = part.text {
-                model_message.push_str(&text);
-                handler.on_event(ChatEvent::Delta(text));
+                    if let Some(function_call) = part.function_call {
+                        self.add_message(Content::new_function_call(function_call.clone()));
+                        return Some(function_call);
+                    } else if let Some(text) = part.text {
+                        model_message.push_str(&text);
+                        handler.on_event(ChatEvent::Delta(text));
+                    }
+                }
+                None => {
+                    handler.on_event(ChatEvent::Error(format!(
+                        "response ended, finish_reason={}",
+                        candidate.finish_reason.unwrap_or("".to_string())
+                    )));
+                }
             }
         }
+
         if !model_message.is_empty() {
             self.add_message(Content::new_text(Role::Model, model_message));
         }
+
         let usage = mem::take(&mut self.usage);
         handler.on_event(ChatEvent::End(usage));
-        Ok(None)
+
+        None
     }
 
     fn add_message(&mut self, content: Content) {
@@ -174,7 +192,7 @@ impl Vertex {
     }
 }
 
-async fn process_response_stream(response: Response, tx: Sender<Result<GenerateContentResponse, Exception>>) {
+async fn read_response_stream(response: Response, tx: Sender<GenerateContentResponse>) -> Result<(), Exception> {
     let stream = &mut response.bytes_stream();
 
     let mut buffer = String::new();
@@ -188,16 +206,16 @@ async fn process_response_stream(response: Response, tx: Sender<Result<GenerateC
                     continue;
                 }
 
-                let content: GenerateContentResponse = json::from_json(&buffer[1..]).unwrap();
-                tx.send(Ok(content)).await.unwrap();
+                let content: GenerateContentResponse = json::from_json(&buffer[1..])?;
+                tx.send(content).await?;
                 buffer.clear();
             }
             Err(err) => {
-                tx.send(Err(Exception::new(err.to_string()))).await.unwrap();
-                break;
+                return Err(Exception::new(err.to_string()));
             }
         }
     }
+    Ok(())
 }
 
 fn is_valid_json(content: &str) -> bool {

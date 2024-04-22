@@ -136,7 +136,9 @@ pub struct GenerateContentResponse {
 
 #[derive(Debug, Deserialize)]
 pub struct Candidate {
-    pub content: Content,
+    pub content: Option<Content>,
+    #[serde(rename = "finishReason")]
+    pub finish_reason: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

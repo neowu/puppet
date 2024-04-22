@@ -37,15 +37,18 @@ impl FunctionStore {
         self.implementations.insert(name, Arc::new(implementation));
     }
 
-    pub async fn call_function(&self, name: &str, args: serde_json::Value) -> Result<serde_json::Value, Exception> {
-        info!("call function, name={name}, args={args}");
-        let function = self.get(name)?;
-        let response = tokio::spawn(async move { function(args) }).await?;
+    pub async fn call_function(&self, name: String, args: serde_json::Value) -> Result<serde_json::Value, Exception> {
+        let function = self.get(&name)?;
+        let response = tokio::spawn(async move {
+            info!("call function, name={name}, args={args}");
+            function(args)
+        })
+        .await?;
         Ok(response)
     }
 
     pub async fn call_functions(&self, functions: Vec<(String, String, serde_json::Value)>) -> Result<Vec<(String, serde_json::Value)>, Exception> {
-        let mut handles = vec![];
+        let mut handles = Vec::with_capacity(functions.len());
         for (id, name, args) in functions {
             let function = self.get(&name)?;
             handles.push(tokio::spawn(async move {
