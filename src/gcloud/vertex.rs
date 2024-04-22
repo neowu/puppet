@@ -107,7 +107,7 @@ impl Vertex {
         let (tx, rx) = channel(64);
         let handle = tokio::spawn(read_response_stream(response, tx));
         let function_call = self.process_response(rx, handler).await;
-        let _ = tokio::try_join!(handle)?;
+        handle.await??;
 
         Ok(function_call)
     }

@@ -96,7 +96,7 @@ impl ChatGPT {
         let handle = tokio::spawn(read_event_source(source, tx));
 
         let function_call = self.process_event(rx, handler).await;
-        let _ = tokio::try_join!(handle)?;
+        handle.await??;
 
         Ok(function_call)
     }
