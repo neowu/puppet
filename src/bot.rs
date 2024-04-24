@@ -1,10 +1,10 @@
-use std::fs;
 use std::path::Path;
 
+use tokio::fs;
 use tracing::info;
 use tracing::warn;
 
-use self::config::Config;
+use crate::bot::config::Config;
 use crate::gcloud::vertex::Vertex;
 use crate::openai::chatgpt::ChatGPT;
 use crate::util::exception::Exception;
@@ -53,9 +53,9 @@ impl Bot {
     }
 }
 
-pub fn load(path: &Path) -> Result<Config, Exception> {
+pub async fn load(path: &Path) -> Result<Config, Exception> {
     info!("load config, path={}", path.to_string_lossy());
-    let content = fs::read_to_string(path)?;
+    let content = fs::read_to_string(path).await?;
     let config: Config = json::from_json(&content)?;
     Ok(config)
 }

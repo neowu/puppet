@@ -1,9 +1,11 @@
 use std::io;
-use std::io::BufRead;
 use std::io::Write;
 use std::path::Path;
 
 use clap::Args;
+use tokio::io::stdin;
+use tokio::io::AsyncBufReadExt;
+use tokio::io::BufReader;
 use tracing::info;
 
 use crate::bot;
@@ -45,15 +47,17 @@ impl ChatHandler for ConsoleHandler {
 
 impl Chat {
     pub async fn execute(&self) -> Result<(), Exception> {
-        let config = bot::load(Path::new(&self.conf))?;
+        let config = bot::load(Path::new(&self.conf)).await?;
         let mut bot = config.create(&self.name)?;
-
         let handler = ConsoleHandler {};
+
+        let reader = BufReader::new(stdin());
+        let mut lines = reader.lines();
+
         loop {
             print_flush("> ")?;
-
-            let line = read_line()?;
-            if line == "/quit" {
+            let Some(line) = lines.next_line().await? else { break };
+            if line.starts_with("/quit") {
                 break;
             }
             if line.starts_with("/file ") {
@@ -62,19 +66,13 @@ impl Chat {
                 bot.chat(line, &handler).await?;
             }
         }
+
         Ok(())
     }
 }
 
-fn read_line() -> Result<String, Exception> {
-    let mut line = String::new();
-    io::stdin().lock().read_line(&mut line)?;
-    let line = line.trim_end();
-    Ok(line.to_string())
-}
-
 fn print_flush(message: &str) -> Result<(), Exception> {
-    print!("{}", message);
+    print!("{message}");
     io::stdout().flush()?;
     Ok(())
 }
