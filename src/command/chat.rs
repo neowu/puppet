@@ -32,7 +32,7 @@ impl ChatHandler for ConsoleHandler {
                 print_flush(&data).unwrap();
             }
             ChatEvent::Error(error) => {
-                println!("\nError: {}", error);
+                println!("\nError: {error}");
             }
             ChatEvent::End(usage) => {
                 println!();

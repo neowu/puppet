@@ -181,10 +181,9 @@ impl Vertex {
 
         let status = response.status();
         if status != 200 {
+            let response_text = response.text().await?;
             return Err(Exception::new(format!(
-                "failed to call gcloud api, status={}, response={}",
-                status,
-                response.text().await?
+                "failed to call gcloud api, status={status}, response={response_text}"
             )));
         }
 
