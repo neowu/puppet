@@ -2,7 +2,6 @@ use clap::Parser;
 use clap::Subcommand;
 use command::chat::Chat;
 use command::generate_zsh_completion::GenerateZshCompletion;
-use command::server::Server;
 use util::exception::Exception;
 
 mod bot;
@@ -22,8 +21,9 @@ pub struct Cli {
 #[derive(Subcommand)]
 #[command(arg_required_else_help(true))]
 pub enum Command {
+    #[command(about = "Chat")]
     Chat(Chat),
-    Server(Server),
+    #[command(about = "Generate zsh completion")]
     GenerateZshCompletion(GenerateZshCompletion),
 }
 
@@ -32,9 +32,8 @@ async fn main() -> Result<(), Exception> {
     tracing_subscriber::fmt().with_thread_ids(true).init();
     let cli = Cli::parse();
     match cli.command {
-        Some(Command::GenerateZshCompletion(command)) => command.execute(),
         Some(Command::Chat(command)) => command.execute().await,
-        Some(Command::Server(command)) => command.execute().await,
+        Some(Command::GenerateZshCompletion(command)) => command.execute(),
         None => panic!("not implemented"),
     }
 }

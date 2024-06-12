@@ -14,7 +14,6 @@ use crate::bot::ChatHandler;
 use crate::util::exception::Exception;
 
 #[derive(Args)]
-#[command(about = "chat")]
 pub struct Chat {
     #[arg(long, help = "conf path")]
     conf: String,

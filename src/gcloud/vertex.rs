@@ -163,7 +163,7 @@ impl Vertex {
             generation_config: GenerationConfig {
                 temperature: 1.0,
                 top_p: 0.95,
-                max_output_tokens: 2048,
+                max_output_tokens: 4096,
             },
             tools: self.tools.clone(),
         };
