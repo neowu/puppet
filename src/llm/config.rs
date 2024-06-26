@@ -4,36 +4,51 @@ use rand::Rng;
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::bot::function::Function;
-use crate::bot::function::FunctionStore;
-use crate::bot::Bot;
-use crate::gcloud::vertex::Vertex;
+use crate::gcloud::gemini::Gemini;
+use crate::llm::function::Function;
+use crate::llm::function::FunctionStore;
+use crate::llm::Model;
 use crate::openai::chatgpt::ChatGPT;
 use crate::util::exception::Exception;
 
 #[derive(Deserialize, Debug)]
 pub struct Config {
-    pub bots: HashMap<String, BotConfig>,
+    pub models: HashMap<String, ModelConfig>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct ModelConfig {
+    pub endpoint: String,
+    pub provider: Provider,
+    pub system_message: Option<String>,
+    pub params: HashMap<String, String>,
+    pub functions: Vec<String>,
+}
+
+#[derive(Deserialize, Debug)]
+pub enum Provider {
+    Azure,
+    GCloud,
 }
 
 impl Config {
-    pub fn create(&self, name: &str) -> Result<Bot, Exception> {
+    pub fn create(&self, name: &str) -> Result<Model, Exception> {
         let config = self
-            .bots
+            .models
             .get(name)
-            .ok_or_else(|| Exception::new(format!("can not find bot, name={name}")))?;
+            .ok_or_else(|| Exception::ValidationError(format!("can not find model, name={name}")))?;
 
         let function_store = load_function_store(config);
 
-        let bot = match config.r#type {
-            BotType::Azure => Bot::ChatGPT(ChatGPT::new(
+        let model = match config.provider {
+            Provider::Azure => Model::ChatGPT(ChatGPT::new(
                 config.endpoint.to_string(),
                 config.params.get("model").unwrap().to_string(),
                 config.params.get("api_key").unwrap().to_string(),
                 config.system_message.clone(),
                 function_store,
             )),
-            BotType::GCloud => Bot::Vertex(Vertex::new(
+            Provider::GCloud => Model::Gemini(Gemini::new(
                 config.endpoint.to_string(),
                 config.params.get("project").unwrap().to_string(),
                 config.params.get("location").unwrap().to_string(),
@@ -43,26 +58,11 @@ impl Config {
             )),
         };
 
-        Ok(bot)
+        Ok(model)
     }
 }
 
-#[derive(Deserialize, Debug)]
-pub struct BotConfig {
-    pub endpoint: String,
-    pub r#type: BotType,
-    pub system_message: Option<String>,
-    pub params: HashMap<String, String>,
-    pub functions: Vec<String>,
-}
-
-#[derive(Deserialize, Debug)]
-pub enum BotType {
-    Azure,
-    GCloud,
-}
-
-fn load_function_store(config: &BotConfig) -> FunctionStore {
+fn load_function_store(config: &ModelConfig) -> FunctionStore {
     let mut function_store = FunctionStore::new();
     for function in &config.functions {
         if let "get_random_number" = function.as_str() {

@@ -1,4 +1,3 @@
-use std::env;
 use std::fs;
 use std::mem;
 use std::ops::Not;
@@ -14,23 +13,24 @@ use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::Sender;
 use tracing::info;
 
-use super::api::Content;
-use super::api::FunctionCall;
-use super::api::GenerationConfig;
-use super::api::InlineData;
-use super::api::Role;
-use super::api::StreamGenerateContent;
-use super::api::Tool;
-use crate::bot::function::FunctionStore;
-use crate::bot::ChatEvent;
-use crate::bot::ChatHandler;
-use crate::bot::Usage;
-use crate::gcloud::api::GenerateContentResponse;
+use super::gemini_api::Content;
+use super::gemini_api::FunctionCall;
+use super::gemini_api::GenerationConfig;
+use super::gemini_api::InlineData;
+use super::gemini_api::Role;
+use super::gemini_api::StreamGenerateContent;
+use super::gemini_api::Tool;
+use super::token;
+use crate::gcloud::gemini_api::GenerateContentResponse;
+use crate::llm::function::FunctionStore;
+use crate::llm::ChatEvent;
+use crate::llm::ChatHandler;
+use crate::llm::Usage;
 use crate::util::exception::Exception;
 use crate::util::http_client;
 use crate::util::json;
 
-pub struct Vertex {
+pub struct Gemini {
     url: String,
     messages: Rc<Vec<Content>>,
     system_message: Option<Rc<Content>>,
@@ -40,7 +40,7 @@ pub struct Vertex {
     usage: Usage,
 }
 
-impl Vertex {
+impl Gemini {
     pub fn new(
         endpoint: String,
         project: String,
@@ -50,7 +50,7 @@ impl Vertex {
         function_store: FunctionStore,
     ) -> Self {
         let url = format!("{endpoint}/v1/projects/{project}/locations/{location}/publishers/google/models/{model}:streamGenerateContent");
-        Vertex {
+        Gemini {
             url,
             messages: Rc::new(vec![]),
             system_message: system_message.map(|message| Rc::new(Content::new_text(Role::Model, message))),
@@ -78,7 +78,7 @@ impl Vertex {
     pub fn file(&mut self, path: &Path) -> Result<(), Exception> {
         let extension = path
             .extension()
-            .ok_or_else(|| Exception::new(format!("file must have extension, path={}", path.to_string_lossy())))?
+            .ok_or_else(|| Exception::ValidationError(format!("file must have extension, path={}", path.to_string_lossy())))?
             .to_str()
             .unwrap();
         let content = fs::read(path)?;
@@ -86,7 +86,10 @@ impl Vertex {
             "jpg" => Ok("image/jpeg".to_string()),
             "png" => Ok("image/png".to_string()),
             "pdf" => Ok("application/pdf".to_string()),
-            _ => Err(Exception::new(format!("not supported extension, path={}", path.to_string_lossy()))),
+            _ => Err(Exception::ValidationError(format!(
+                "not supported extension, path={}",
+                path.to_string_lossy()
+            ))),
         }?;
         info!(
             "file added, will submit with next message, mime_type={mime_type}, path={}",
@@ -182,7 +185,7 @@ impl Vertex {
         let status = response.status();
         if status != 200 {
             let response_text = response.text().await?;
-            return Err(Exception::new(format!(
+            return Err(Exception::ExternalError(format!(
                 "failed to call gcloud api, status={status}, response={response_text}"
             )));
         }
@@ -210,7 +213,7 @@ async fn read_response_stream(response: Response, tx: Sender<GenerateContentResp
                 buffer.clear();
             }
             Err(err) => {
-                return Err(Exception::new(err.to_string()));
+                return Err(Exception::unexpected(err));
             }
         }
     }
@@ -220,8 +223,4 @@ async fn read_response_stream(response: Response, tx: Sender<GenerateContentResp
 fn is_valid_json(content: &str) -> bool {
     let result: serde_json::Result<serde::de::IgnoredAny> = serde_json::from_str(content);
     result.is_ok()
-}
-
-fn token() -> String {
-    env::var("GCLOUD_AUTH_TOKEN").expect("please set GCLOUD_AUTH_TOKEN env")
 }

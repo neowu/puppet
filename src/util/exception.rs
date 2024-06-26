@@ -6,35 +6,29 @@ use std::io;
 use tokio::sync::mpsc::error::SendError;
 use tokio::task::JoinError;
 
-pub struct Exception {
-    message: String,
-    context: Option<String>,
-    trace: String,
+pub enum Exception {
+    ValidationError(String),
+    ExternalError(String),
+    Unexpected { message: String, trace: String },
 }
 
 impl Exception {
-    pub fn new(message: String) -> Self {
-        Exception::create(message, None)
-    }
-
-    pub fn from<T>(error: T) -> Self
+    pub fn unexpected<T>(error: T) -> Self
     where
-        T: Error + 'static,
+        T: std::error::Error,
     {
-        Exception::create(error.to_string(), None)
+        Self::Unexpected {
+            message: error.to_string(),
+            trace: Backtrace::force_capture().to_string(),
+        }
     }
 
-    pub fn from_with_context<T>(error: T, context: String) -> Self
+    pub fn unexpected_with_context<T>(error: T, context: &str) -> Self
     where
-        T: Error + 'static,
+        T: Error,
     {
-        Exception::create(error.to_string(), Some(context))
-    }
-
-    fn create(message: String, context: Option<String>) -> Self {
-        Self {
-            message,
-            context,
+        Self::Unexpected {
+            message: format!("error={}, context={}", error, context),
             trace: Backtrace::force_capture().to_string(),
         }
     }
@@ -42,13 +36,11 @@ impl Exception {
 
 impl fmt::Debug for Exception {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "Exception: {}\nContext: {}\nTrace:\n{}",
-            self.message,
-            self.context.as_ref().unwrap_or(&"".to_string()),
-            self.trace
-        )
+        match self {
+            Exception::ValidationError(message) => write!(f, "{}", message),
+            Exception::ExternalError(message) => write!(f, "{}", message),
+            Exception::Unexpected { message, trace } => write!(f, "{}\ntrace:\n{}", message, trace),
+        }
     }
 }
 
@@ -62,18 +54,18 @@ impl Error for Exception {}
 
 impl From<io::Error> for Exception {
     fn from(err: io::Error) -> Self {
-        Exception::new(err.to_string())
+        Exception::unexpected(err)
     }
 }
 
 impl From<JoinError> for Exception {
     fn from(err: JoinError) -> Self {
-        Exception::new(err.to_string())
+        Exception::unexpected(err)
     }
 }
 
 impl<T> From<SendError<T>> for Exception {
     fn from(err: SendError<T>) -> Self {
-        Exception::new(err.to_string())
+        Exception::unexpected(err)
     }
 }

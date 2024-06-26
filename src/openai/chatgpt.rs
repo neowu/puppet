@@ -10,15 +10,15 @@ use tokio::sync::mpsc::channel;
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::Sender;
 
-use crate::bot::function::FunctionStore;
-use crate::bot::ChatEvent;
-use crate::bot::ChatHandler;
-use crate::bot::Usage;
-use crate::openai::api::ChatRequest;
-use crate::openai::api::ChatRequestMessage;
-use crate::openai::api::ChatResponse;
-use crate::openai::api::Role;
-use crate::openai::api::Tool;
+use crate::llm::function::FunctionStore;
+use crate::llm::ChatEvent;
+use crate::llm::ChatHandler;
+use crate::llm::Usage;
+use crate::openai::chatgpt_api::ChatRequest;
+use crate::openai::chatgpt_api::ChatRequestMessage;
+use crate::openai::chatgpt_api::ChatResponse;
+use crate::openai::chatgpt_api::Role;
+use crate::openai::chatgpt_api::Tool;
 use crate::util::exception::Exception;
 use crate::util::http_client;
 use crate::util::json;
@@ -149,7 +149,7 @@ impl ChatGPT {
 
 impl From<CannotCloneRequestError> for Exception {
     fn from(err: CannotCloneRequestError) -> Self {
-        Exception::new(err.to_string())
+        Exception::unexpected(err)
     }
 }
 
@@ -184,7 +184,7 @@ async fn read_event_source(mut source: EventSource, tx: Sender<InternalEvent>) -
             }
             Err(err) => {
                 source.close();
-                return Err(Exception::new(err.to_string()));
+                return Err(Exception::unexpected(err));
             }
         }
     }

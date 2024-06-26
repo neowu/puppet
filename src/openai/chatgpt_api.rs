@@ -4,7 +4,7 @@ use std::rc::Rc;
 use serde::Deserialize;
 use serde::Serialize;
 
-use crate::bot::function::Function;
+use crate::llm::function::Function;
 
 #[derive(Debug, Serialize)]
 pub struct ChatRequest {
@@ -93,6 +93,7 @@ pub enum Role {
     Tool,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct ChatResponse {
     pub id: String,
@@ -102,6 +103,7 @@ pub struct ChatResponse {
     pub choices: Vec<ChatCompletionChoice>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct ChatCompletionChoice {
     pub index: i64,

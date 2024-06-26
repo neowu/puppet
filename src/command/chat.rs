@@ -1,6 +1,7 @@
 use std::io;
 use std::io::Write;
 use std::path::Path;
+use std::path::PathBuf;
 
 use clap::Args;
 use tokio::io::stdin;
@@ -8,17 +9,17 @@ use tokio::io::AsyncBufReadExt;
 use tokio::io::BufReader;
 use tracing::info;
 
-use crate::bot;
-use crate::bot::ChatEvent;
-use crate::bot::ChatHandler;
+use crate::llm;
+use crate::llm::ChatEvent;
+use crate::llm::ChatHandler;
 use crate::util::exception::Exception;
 
 #[derive(Args)]
 pub struct Chat {
     #[arg(long, help = "conf path")]
-    conf: String,
+    conf: PathBuf,
 
-    #[arg(long, help = "bot name")]
+    #[arg(long, help = "model name")]
     name: String,
 }
 
@@ -46,8 +47,8 @@ impl ChatHandler for ConsoleHandler {
 
 impl Chat {
     pub async fn execute(&self) -> Result<(), Exception> {
-        let config = bot::load(Path::new(&self.conf)).await?;
-        let mut bot = config.create(&self.name)?;
+        let config = llm::load(&self.conf).await?;
+        let mut model = config.create(&self.name)?;
         let handler = ConsoleHandler {};
 
         let reader = BufReader::new(stdin());
@@ -60,9 +61,9 @@ impl Chat {
                 break;
             }
             if line.starts_with("/file ") {
-                bot.file(Path::new(line.strip_prefix("/file ").unwrap()))?;
+                model.file(Path::new(line.strip_prefix("/file ").unwrap()))?;
             } else {
-                bot.chat(line, &handler).await?;
+                model.chat(line, &handler).await?;
             }
         }
 

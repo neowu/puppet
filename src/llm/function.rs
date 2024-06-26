@@ -64,7 +64,7 @@ impl FunctionStore {
         let function = self
             .implementations
             .get(name)
-            .ok_or_else(|| Exception::new(format!("function not found, name={name}")))?;
+            .ok_or_else(|| Exception::ValidationError(format!("function not found, name={name}")))?;
         Ok(Arc::clone(function))
     }
 }

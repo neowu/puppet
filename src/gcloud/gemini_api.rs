@@ -3,7 +3,7 @@ use std::rc::Rc;
 use serde::Deserialize;
 use serde::Serialize;
 
-use crate::bot::function::Function;
+use crate::llm::function::Function;
 
 #[derive(Debug, Serialize)]
 pub struct StreamGenerateContent {

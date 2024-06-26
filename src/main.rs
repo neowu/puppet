@@ -2,17 +2,19 @@ use clap::Parser;
 use clap::Subcommand;
 use command::chat::Chat;
 use command::generate_zsh_completion::GenerateZshCompletion;
+use command::speak::Speak;
 use util::exception::Exception;
 
-mod bot;
 mod command;
 mod gcloud;
+mod llm;
 mod openai;
+mod tts;
 mod util;
 
 #[derive(Parser)]
 #[command(author, version)]
-#[command(about = "Puppet AI")]
+#[command(about = "puppet ai")]
 pub struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
@@ -21,9 +23,11 @@ pub struct Cli {
 #[derive(Subcommand)]
 #[command(arg_required_else_help(true))]
 pub enum Command {
-    #[command(about = "Chat")]
+    #[command(about = "chat")]
     Chat(Chat),
-    #[command(about = "Generate zsh completion")]
+    #[command(about = "speak")]
+    Speech(Speak),
+    #[command(about = "generate zsh completion")]
     GenerateZshCompletion(GenerateZshCompletion),
 }
 
@@ -33,6 +37,7 @@ async fn main() -> Result<(), Exception> {
     let cli = Cli::parse();
     match cli.command {
         Some(Command::Chat(command)) => command.execute().await,
+        Some(Command::Speech(command)) => command.execute().await,
         Some(Command::GenerateZshCompletion(command)) => command.execute(),
         None => panic!("not implemented"),
     }

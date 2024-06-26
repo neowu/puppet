@@ -4,8 +4,8 @@ use tokio::fs;
 use tracing::info;
 use tracing::warn;
 
-use crate::bot::config::Config;
-use crate::gcloud::vertex::Vertex;
+use crate::gcloud::gemini::Gemini;
+use crate::llm::config::Config;
 use crate::openai::chatgpt::ChatGPT;
 use crate::util::exception::Exception;
 use crate::util::json;
@@ -29,26 +29,26 @@ pub struct Usage {
     pub response_tokens: i32,
 }
 
-pub enum Bot {
+pub enum Model {
     ChatGPT(ChatGPT),
-    Vertex(Vertex),
+    Gemini(Gemini),
 }
 
-impl Bot {
+impl Model {
     pub async fn chat(&mut self, message: String, handler: &impl ChatHandler) -> Result<(), Exception> {
         match self {
-            Bot::ChatGPT(bot) => bot.chat(message, handler).await,
-            Bot::Vertex(bot) => bot.chat(message, handler).await,
+            Model::ChatGPT(model) => model.chat(message, handler).await,
+            Model::Gemini(model) => model.chat(message, handler).await,
         }
     }
 
     pub fn file(&mut self, path: &Path) -> Result<(), Exception> {
         match self {
-            Bot::ChatGPT(_bot) => {
+            Model::ChatGPT(_model) => {
                 warn!("ChatGPT does not support uploading file");
                 Ok(())
             }
-            Bot::Vertex(bot) => bot.file(path),
+            Model::Gemini(model) => model.file(path),
         }
     }
 }
