@@ -4,9 +4,9 @@ use tokio::fs;
 use tracing::info;
 use tracing::warn;
 
+use crate::azure::chatgpt::ChatGPT;
 use crate::gcloud::gemini::Gemini;
 use crate::llm::config::Config;
-use crate::openai::chatgpt::ChatGPT;
 use crate::util::exception::Exception;
 use crate::util::json;
 

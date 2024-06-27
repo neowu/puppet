@@ -1,11 +1,15 @@
+use std::env::temp_dir;
 use std::path::PathBuf;
 
 use clap::arg;
 use clap::Args;
+use tokio::fs;
 use tokio::io::stdin;
 use tokio::io::AsyncReadExt;
+use tokio::process::Command;
+use tracing::info;
+use uuid::Uuid;
 
-use crate::gcloud::synthesize;
 use crate::tts;
 use crate::util::exception::Exception;
 
@@ -30,28 +34,31 @@ impl Speak {
             return Err(Exception::ValidationError("must specify --stdin or --text".to_string()));
         }
 
-        let config = tts::load(&self.conf).await?;
-        let model = config
-            .models
-            .get(&self.name)
-            .ok_or_else(|| Exception::ValidationError(format!("can not find model, name={}", self.name)))?;
+        let speech = tts::load(&self.conf, &self.name).await?;
 
         let mut buffer = String::new();
         let text = if self.stdin {
             stdin().read_to_string(&mut buffer).await?;
+            info!("text={}", buffer);
             &buffer
         } else {
             self.text.as_ref().unwrap()
         };
 
-        let gcloud = synthesize::GCloud {
-            endpoint: model.endpoint.to_string(),
-            project: model.params.get("project").unwrap().to_string(),
-            voice: model.params.get("voice").unwrap().to_string(),
-        };
+        let audio = speech.synthesize(text).await?;
 
-        gcloud.synthesize(text).await?;
+        play(audio).await?;
 
         Ok(())
     }
+}
+
+async fn play(audio: Vec<u8>) -> Result<(), Exception> {
+    let temp_file = temp_dir().join(format!("{}.wav", Uuid::new_v4()));
+    fs::write(&temp_file, &audio).await?;
+    info!("play audio file, file={}", temp_file.to_string_lossy());
+    let mut command = Command::new("afplay").args([temp_file.to_string_lossy().to_string()]).spawn()?;
+    let _ = command.wait().await;
+    fs::remove_file(temp_file).await?;
+    Ok(())
 }

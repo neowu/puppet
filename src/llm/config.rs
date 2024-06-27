@@ -4,11 +4,12 @@ use rand::Rng;
 use serde::Deserialize;
 use serde_json::json;
 
+use crate::azure::chatgpt::ChatGPT;
 use crate::gcloud::gemini::Gemini;
 use crate::llm::function::Function;
 use crate::llm::function::FunctionStore;
 use crate::llm::Model;
-use crate::openai::chatgpt::ChatGPT;
+use crate::provider::Provider;
 use crate::util::exception::Exception;
 
 #[derive(Deserialize, Debug)]
@@ -23,12 +24,6 @@ pub struct ModelConfig {
     pub system_message: Option<String>,
     pub params: HashMap<String, String>,
     pub functions: Vec<String>,
-}
-
-#[derive(Deserialize, Debug)]
-pub enum Provider {
-    Azure,
-    GCloud,
 }
 
 impl Config {

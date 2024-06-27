@@ -1,32 +1,25 @@
 use std::borrow::Cow;
-use std::env::temp_dir;
 
 use base64::prelude::BASE64_STANDARD;
 use base64::DecodeError;
 use base64::Engine;
-use tokio::fs;
-use tokio::process::Command;
+use serde::Deserialize;
+use serde::Serialize;
 use tracing::info;
-use uuid::Uuid;
 
 use super::token;
-use crate::gcloud::synthesize_api::AudioConfig;
-use crate::gcloud::synthesize_api::Input;
-use crate::gcloud::synthesize_api::SynthesizeRequest;
-use crate::gcloud::synthesize_api::SynthesizeResponse;
-use crate::gcloud::synthesize_api::Voice;
 use crate::util::exception::Exception;
 use crate::util::http_client;
 use crate::util::json;
 
-pub struct GCloud {
+pub struct GCloudTTS {
     pub endpoint: String,
     pub project: String,
     pub voice: String,
 }
 
-impl GCloud {
-    pub async fn synthesize(&self, text: &str) -> Result<(), Exception> {
+impl GCloudTTS {
+    pub async fn synthesize(&self, text: &str) -> Result<Vec<u8>, Exception> {
         info!("call gcloud synthesize api, endpoint={}", self.endpoint);
         let request = SynthesizeRequest {
             audio_config: AudioConfig {
@@ -65,20 +58,45 @@ impl GCloud {
         let response: SynthesizeResponse = json::from_json(&response_body)?;
         let content = BASE64_STANDARD.decode(response.audio_content)?;
 
-        play(content).await?;
-
-        Ok(())
+        Ok(content)
     }
 }
 
-async fn play(audio: Vec<u8>) -> Result<(), Exception> {
-    let temp_file = temp_dir().join(format!("{}.wav", Uuid::new_v4()));
-    fs::write(&temp_file, &audio).await?;
-    info!("play audio file, file={}", temp_file.to_string_lossy());
-    let mut command = Command::new("afplay").args([temp_file.to_string_lossy().to_string()]).spawn()?;
-    let _ = command.wait().await;
-    fs::remove_file(temp_file).await?;
-    Ok(())
+#[derive(Debug, Serialize)]
+struct SynthesizeRequest<'a> {
+    #[serde(rename = "audioConfig")]
+    audio_config: AudioConfig,
+    input: Input<'a>,
+    voice: Voice<'a>,
+}
+
+#[derive(Debug, Serialize)]
+struct AudioConfig {
+    #[serde(rename = "audioEncoding")]
+    audio_encoding: String,
+    #[serde(rename = "effectsProfileId")]
+    effects_profile_id: Vec<String>,
+    pitch: i64,
+    #[serde(rename = "speakingRate")]
+    speaking_rate: i64,
+}
+
+#[derive(Debug, Serialize)]
+struct Input<'a> {
+    text: Cow<'a, str>,
+}
+
+#[derive(Debug, Serialize)]
+struct Voice<'a> {
+    #[serde(rename = "languageCode")]
+    language_code: String,
+    name: Cow<'a, str>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SynthesizeResponse {
+    #[serde(rename = "audioContent")]
+    audio_content: String,
 }
 
 impl From<DecodeError> for Exception {

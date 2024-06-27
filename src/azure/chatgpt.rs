@@ -10,15 +10,15 @@ use tokio::sync::mpsc::channel;
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::Sender;
 
+use crate::azure::chatgpt_api::ChatRequest;
+use crate::azure::chatgpt_api::ChatRequestMessage;
+use crate::azure::chatgpt_api::ChatResponse;
+use crate::azure::chatgpt_api::Role;
+use crate::azure::chatgpt_api::Tool;
 use crate::llm::function::FunctionStore;
 use crate::llm::ChatEvent;
 use crate::llm::ChatHandler;
 use crate::llm::Usage;
-use crate::openai::chatgpt_api::ChatRequest;
-use crate::openai::chatgpt_api::ChatRequestMessage;
-use crate::openai::chatgpt_api::ChatResponse;
-use crate::openai::chatgpt_api::Role;
-use crate::openai::chatgpt_api::Tool;
 use crate::util::exception::Exception;
 use crate::util::http_client;
 use crate::util::json;
@@ -125,8 +125,8 @@ impl ChatGPT {
     async fn call_api(&mut self) -> Result<EventSource, Exception> {
         let request = ChatRequest {
             messages: Rc::clone(&self.messages),
-            temperature: 0.8,
-            top_p: 0.8,
+            temperature: 0.7,
+            top_p: 0.95,
             stream: true,
             stop: None,
             max_tokens: 800,
