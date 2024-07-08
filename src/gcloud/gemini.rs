@@ -8,7 +8,6 @@ use std::str;
 use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
 use bytes::Bytes;
-use futures::StreamExt;
 use reqwest::Response;
 use tokio::sync::mpsc::channel;
 use tokio::sync::mpsc::Receiver;
@@ -209,27 +208,19 @@ impl Gemini {
 }
 
 async fn read_response_stream(response: Response, tx: Sender<GenerateContentResponse>) -> Result<(), Exception> {
-    let stream = &mut response.bytes_stream();
+    let mut response = response;
+    let mut buffer = String::with_capacity(1024);
+    while let Some(chunk) = response.chunk().await? {
+        buffer.push_str(str::from_utf8(&chunk).unwrap());
 
-    let mut buffer = String::new();
-    while let Some(result) = stream.next().await {
-        match result {
-            Ok(chunk) => {
-                buffer.push_str(str::from_utf8(&chunk).unwrap());
-
-                // first char is '[' or ','
-                if !is_valid_json(&buffer[1..]) {
-                    continue;
-                }
-
-                let content: GenerateContentResponse = json::from_json(&buffer[1..])?;
-                tx.send(content).await?;
-                buffer.clear();
-            }
-            Err(err) => {
-                return Err(Exception::unexpected(err));
-            }
+        // first char is '[' or ','
+        if !is_valid_json(&buffer[1..]) {
+            continue;
         }
+
+        let content: GenerateContentResponse = json::from_json(&buffer[1..])?;
+        tx.send(content).await?;
+        buffer.clear();
     }
     Ok(())
 }

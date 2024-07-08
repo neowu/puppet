@@ -13,6 +13,8 @@ pub struct ChatRequest {
     pub top_p: f32,
     pub stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream_options: Option<StreamOptions>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub stop: Option<Vec<String>>,
     pub max_tokens: i32,
     pub presence_penalty: f32,
@@ -31,6 +33,11 @@ pub struct ChatRequestMessage {
     pub tool_call_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCall>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StreamOptions {
+    pub include_usage: bool,
 }
 
 impl ChatRequestMessage {
@@ -101,6 +108,7 @@ pub struct ChatResponse {
     pub created: i64,
     pub model: String,
     pub choices: Vec<ChatCompletionChoice>,
+    pub usage: Option<Usage>,
 }
 
 #[allow(dead_code)]
@@ -130,4 +138,12 @@ pub struct ToolCall {
 pub struct FunctionCall {
     pub name: Option<String>,
     pub arguments: String,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+pub struct Usage {
+    pub completion_tokens: i32,
+    pub prompt_tokens: i32,
+    pub total_tokens: i32,
 }

@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use futures::future::try_join_all;
 use serde::Serialize;
+use tokio::task::JoinSet;
 use tracing::info;
 
 use crate::util::exception::Exception;
@@ -48,15 +48,18 @@ impl FunctionStore {
     }
 
     pub async fn call_functions(&self, functions: Vec<(String, String, serde_json::Value)>) -> Result<Vec<(String, serde_json::Value)>, Exception> {
-        let mut handles = Vec::with_capacity(functions.len());
+        let mut handles = JoinSet::new();
         for (id, name, args) in functions {
             let function = self.get(&name)?;
-            handles.push(tokio::spawn(async move {
+            handles.spawn(async move {
                 info!("call function, id={id}, name={name}, args={args}");
                 (id, function(args))
-            }));
+            });
         }
-        let results = try_join_all(handles).await?;
+        let mut results = vec![];
+        while let Some(result) = handles.join_next().await {
+            results.push(result?)
+        }
         Ok(results)
     }
 
