@@ -28,11 +28,28 @@ pub struct ChatRequest {
 #[derive(Debug, Serialize)]
 pub struct ChatRequestMessage {
     pub role: Role,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
+    #[serde(rename = "content", skip_serializing_if = "Option::is_none")]
+    pub image_content: Option<Vec<ImageContent>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCall>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ImageContent {
+    pub r#type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_url: Option<ImageUrl>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ImageUrl {
+    pub url: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -45,6 +62,7 @@ impl ChatRequestMessage {
         ChatRequestMessage {
             role,
             content: Some(message),
+            image_content: None,
             tool_call_id: None,
             tool_calls: None,
         }
@@ -54,6 +72,7 @@ impl ChatRequestMessage {
         ChatRequestMessage {
             role: Role::Tool,
             content: Some(result),
+            image_content: None,
             tool_call_id: Some(id),
             tool_calls: None,
         }
@@ -63,6 +82,7 @@ impl ChatRequestMessage {
         ChatRequestMessage {
             role: Role::Assistant,
             content: None,
+            image_content: None,
             tool_call_id: None,
             tool_calls: Some(
                 calls
@@ -108,7 +128,7 @@ pub struct ChatResponse {
     pub created: i64,
     pub model: String,
     pub choices: Vec<ChatCompletionChoice>,
-    pub usage: Option<Usage>,
+    pub usage: Option<Usage>, // not supported by azure openai api yet
 }
 
 #[allow(dead_code)]

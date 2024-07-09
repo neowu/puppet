@@ -58,7 +58,7 @@ async fn play(audio: Vec<u8>) -> Result<(), Exception> {
     fs::write(&temp_file, &audio).await?;
     info!("play audio file, file={}", temp_file.to_string_lossy());
     let mut command = Command::new("afplay").args([temp_file.to_string_lossy().to_string()]).spawn()?;
-    let _ = command.wait().await;
+    command.wait().await?;
     fs::remove_file(temp_file).await?;
     Ok(())
 }

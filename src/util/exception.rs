@@ -15,7 +15,7 @@ pub enum Exception {
 impl Exception {
     pub fn unexpected<T>(error: T) -> Self
     where
-        T: std::error::Error,
+        T: ToString,
     {
         Self::Unexpected {
             message: error.to_string(),
@@ -25,10 +25,10 @@ impl Exception {
 
     pub fn unexpected_with_context<T>(error: T, context: &str) -> Self
     where
-        T: Error,
+        T: ToString,
     {
         Self::Unexpected {
-            message: format!("error={}, context={}", error, context),
+            message: format!("error={}, context={}", error.to_string(), context),
             trace: Backtrace::force_capture().to_string(),
         }
     }

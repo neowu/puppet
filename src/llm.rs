@@ -19,7 +19,6 @@ pub trait ChatHandler {
 
 pub enum ChatEvent {
     Delta(String),
-    Error(String),
     End(Usage),
 }
 

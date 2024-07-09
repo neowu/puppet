@@ -110,13 +110,17 @@ impl Gemini {
 
         let (tx, rx) = channel(64);
         let handle = tokio::spawn(read_response_stream(response, tx));
-        let function_call = self.process_response(rx, handler).await;
+        let function_call = self.process_response(rx, handler).await?;
         handle.await??;
 
         Ok(function_call)
     }
 
-    async fn process_response(&mut self, mut rx: Receiver<GenerateContentResponse>, handler: &impl ChatHandler) -> Option<FunctionCall> {
+    async fn process_response(
+        &mut self,
+        mut rx: Receiver<GenerateContentResponse>,
+        handler: &impl ChatHandler,
+    ) -> Result<Option<FunctionCall>, Exception> {
         let mut model_message = String::new();
         let mut function_call = None;
         while let Some(response) = rx.recv().await {
@@ -131,29 +135,27 @@ impl Gemini {
                     continue;
                 }
             }
-            match candidate.content {
-                Some(content) => {
-                    let part = content.parts.into_iter().next().unwrap();
+            if candidate.content.is_none() {
+                return Err(Exception::unexpected(format!(
+                    "response ended, finish_reason={}",
+                    candidate.finish_reason.unwrap_or("".to_string())
+                )));
+            }
+            if let Some(content) = candidate.content {
+                let part = content.parts.into_iter().next().unwrap();
 
-                    if let Some(call) = part.function_call {
-                        function_call = Some(call);
-                    } else if let Some(text) = part.text {
-                        model_message.push_str(&text);
-                        handler.on_event(ChatEvent::Delta(text));
-                    }
-                }
-                None => {
-                    handler.on_event(ChatEvent::Error(format!(
-                        "response ended, finish_reason={}",
-                        candidate.finish_reason.unwrap_or("".to_string())
-                    )));
+                if let Some(call) = part.function_call {
+                    function_call = Some(call);
+                } else if let Some(text) = part.text {
+                    model_message.push_str(&text);
+                    handler.on_event(ChatEvent::Delta(text));
                 }
             }
         }
 
         if let Some(call) = function_call {
             self.add_message(Content::new_function_call(call.clone()));
-            return Some(call);
+            return Ok(Some(call));
         }
 
         if !model_message.is_empty() {
@@ -163,7 +165,7 @@ impl Gemini {
         let usage = mem::take(&mut self.usage);
         handler.on_event(ChatEvent::End(usage));
 
-        None
+        Ok(None)
     }
 
     fn add_message(&mut self, content: Content) {
