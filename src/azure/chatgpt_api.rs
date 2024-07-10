@@ -29,9 +29,7 @@ pub struct ChatRequest {
 pub struct ChatRequestMessage {
     pub role: Role,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub content: Option<String>,
-    #[serde(rename = "content", skip_serializing_if = "Option::is_none")]
-    pub image_content: Option<Vec<ImageContent>>,
+    pub content: Option<Vec<Content>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -39,7 +37,7 @@ pub struct ChatRequestMessage {
 }
 
 #[derive(Debug, Serialize)]
-pub struct ImageContent {
+pub struct Content {
     pub r#type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
@@ -61,8 +59,11 @@ impl ChatRequestMessage {
     pub fn new_message(role: Role, message: String) -> Self {
         ChatRequestMessage {
             role,
-            content: Some(message),
-            image_content: None,
+            content: Some(vec![Content {
+                r#type: "text".to_string(),
+                text: Some(message),
+                image_url: None,
+            }]),
             tool_call_id: None,
             tool_calls: None,
         }
@@ -71,8 +72,11 @@ impl ChatRequestMessage {
     pub fn new_function_response(id: String, result: String) -> Self {
         ChatRequestMessage {
             role: Role::Tool,
-            content: Some(result),
-            image_content: None,
+            content: Some(vec![Content {
+                r#type: "text".to_string(),
+                text: Some(result),
+                image_url: None,
+            }]),
             tool_call_id: Some(id),
             tool_calls: None,
         }
@@ -82,7 +86,6 @@ impl ChatRequestMessage {
         ChatRequestMessage {
             role: Role::Assistant,
             content: None,
-            image_content: None,
             tool_call_id: None,
             tool_calls: Some(
                 calls

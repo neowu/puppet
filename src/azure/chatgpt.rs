@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::ops::Not;
 use std::rc::Rc;
 use std::str;
+use std::str::Utf8Error;
 
 use bytes::Bytes;
 use reqwest::Response;
@@ -10,8 +11,6 @@ use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::Sender;
 use tracing::info;
 
-use super::chatgpt_api::ImageContent;
-use super::chatgpt_api::ImageUrl;
 use crate::azure::chatgpt_api::ChatRequest;
 use crate::azure::chatgpt_api::ChatRequestMessage;
 use crate::azure::chatgpt_api::ChatResponse;
@@ -62,30 +61,7 @@ impl ChatGPT {
     }
 
     pub async fn chat(&mut self, message: String, handler: &impl ChatHandler) -> Result<(), Exception> {
-        if message == "1" {
-            self.add_message(ChatRequestMessage {
-                role: Role::User,
-                content: None,
-                image_content: Some(vec![
-                    ImageContent {
-                        r#type: "text".to_string(),
-                        text: Some("what is in picture".to_string()),
-                        image_url: None,
-                    },
-                    ImageContent {
-                        r#type: "image_url".to_string(),
-                        text: None,
-                        image_url: Some(ImageUrl {
-                            url: "https://learn.microsoft.com/en-us/azure/ai-services/computer-vision/media/quickstarts/presentation.png".to_string(),
-                        }),
-                    },
-                ]),
-                tool_call_id: None,
-                tool_calls: None,
-            });
-        } else {
-            self.add_message(ChatRequestMessage::new_message(Role::User, message));
-        }
+        self.add_message(ChatRequestMessage::new_message(Role::User, message));
 
         let result = self.process(handler).await?;
         if let Some(calls) = result {
@@ -115,22 +91,50 @@ impl ChatGPT {
 
         let response = self.call_api().await?;
         let handle = tokio::spawn(read_sse(response, tx));
-        self.process_event(rx, handler).await;
-        let function_call = handle.await??;
+        let function_call = self.process_response(rx, handler).await?;
+        handle.await??;
 
         Ok(function_call)
     }
 
-    async fn process_event(&mut self, mut rx: Receiver<ChatEvent>, handler: &impl ChatHandler) {
+    async fn process_response(&mut self, mut rx: Receiver<ChatResponse>, handler: &impl ChatHandler) -> Result<Option<FunctionCall>, Exception> {
+        let mut function_calls: FunctionCall = HashMap::new();
+        let mut usage = Usage::default();
         let mut assistant_message = String::new();
-        while let Some(event) = rx.recv().await {
-            if let ChatEvent::Delta(ref data) = event {
-                assistant_message.push_str(data);
+
+        while let Some(response) = rx.recv().await {
+            if let Some(choice) = response.choices.into_iter().next() {
+                let delta = choice.delta.unwrap();
+
+                if let Some(tool_calls) = delta.tool_calls {
+                    let call = tool_calls.into_iter().next().unwrap();
+                    if let Some(name) = call.function.name {
+                        function_calls.insert(call.index, (call.id.unwrap(), name, String::new()));
+                    }
+                    function_calls.get_mut(&call.index).unwrap().2.push_str(&call.function.arguments)
+                } else if let Some(value) = delta.content {
+                    assistant_message.push_str(&value);
+                    handler.on_event(ChatEvent::Delta(value));
+                }
             }
-            handler.on_event(event);
+
+            if let Some(value) = response.usage {
+                usage = Usage {
+                    request_tokens: value.prompt_tokens,
+                    response_tokens: value.completion_tokens,
+                };
+            }
         }
+
         if !assistant_message.is_empty() {
             self.add_message(ChatRequestMessage::new_message(Role::Assistant, assistant_message));
+        }
+
+        if !function_calls.is_empty() {
+            Ok(Some(function_calls))
+        } else {
+            handler.on_event(ChatEvent::End(usage));
+            Ok(None)
         }
     }
 
@@ -173,45 +177,22 @@ impl ChatGPT {
     }
 }
 
-async fn read_sse(response: Response, tx: Sender<ChatEvent>) -> Result<Option<FunctionCall>, Exception> {
-    let mut function_calls: FunctionCall = HashMap::new();
-    let mut usage = Usage::default();
-
+async fn read_sse(response: Response, tx: Sender<ChatResponse>) -> Result<(), Exception> {
     let mut buffer = String::with_capacity(1024);
     let mut response = response;
-    'outer: while let Some(chunk) = response.chunk().await? {
-        buffer.push_str(str::from_utf8(&chunk).unwrap());
+    while let Some(chunk) = response.chunk().await? {
+        buffer.push_str(str::from_utf8(&chunk)?);
 
         while let Some(index) = buffer.find("\n\n") {
             if buffer.starts_with("data:") {
                 let data = &buffer[6..index];
 
                 if data == "[DONE]" {
-                    break 'outer;
+                    return Ok(());
                 }
 
                 let response: ChatResponse = json::from_json(data)?;
-
-                if let Some(choice) = response.choices.into_iter().next() {
-                    let delta = choice.delta.unwrap();
-
-                    if let Some(tool_calls) = delta.tool_calls {
-                        let call = tool_calls.into_iter().next().unwrap();
-                        if let Some(name) = call.function.name {
-                            function_calls.insert(call.index, (call.id.unwrap(), name, String::new()));
-                        }
-                        function_calls.get_mut(&call.index).unwrap().2.push_str(&call.function.arguments)
-                    } else if let Some(value) = delta.content {
-                        tx.send(ChatEvent::Delta(value)).await?;
-                    }
-                }
-
-                if let Some(value) = response.usage {
-                    usage = Usage {
-                        request_tokens: value.prompt_tokens,
-                        response_tokens: value.completion_tokens,
-                    };
-                }
+                tx.send(response).await?;
 
                 buffer.replace_range(0..index + 2, "");
             } else {
@@ -219,11 +200,11 @@ async fn read_sse(response: Response, tx: Sender<ChatEvent>) -> Result<Option<Fu
             }
         }
     }
+    Ok(())
+}
 
-    if !function_calls.is_empty() {
-        Ok(Some(function_calls))
-    } else {
-        tx.send(ChatEvent::End(usage)).await?;
-        Ok(None)
+impl From<Utf8Error> for Exception {
+    fn from(err: Utf8Error) -> Self {
+        Exception::unexpected(err)
     }
 }

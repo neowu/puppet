@@ -102,7 +102,6 @@ pub struct Part {
     pub text: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub inline_data: Option<InlineData>,
-
     #[serde(rename = "functionCall")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub function_call: Option<FunctionCall>,
