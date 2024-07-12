@@ -26,6 +26,7 @@ use crate::gcloud::gemini_api::GenerateContentResponse;
 use crate::llm::function::FunctionStore;
 use crate::llm::ChatEvent;
 use crate::llm::ChatListener;
+use crate::llm::ChatOption;
 use crate::llm::Usage;
 use crate::util::exception::Exception;
 use crate::util::http_client;
@@ -37,9 +38,10 @@ pub struct Gemini {
     system_instruction: Option<Rc<Content>>,
     tools: Option<Rc<[Tool]>>,
     function_store: FunctionStore,
-    usage: Usage,
-    last_model_message: String,
+    pub option: Option<ChatOption>,
     pub listener: Option<Box<dyn ChatListener>>,
+    last_model_message: String,
+    usage: Usage,
 }
 
 impl Gemini {
@@ -53,9 +55,10 @@ impl Gemini {
                 function_declarations: function_store.declarations.to_vec(),
             }])),
             function_store,
-            usage: Usage::default(),
-            last_model_message: String::with_capacity(1024),
+            option: None,
             listener: None,
+            last_model_message: String::with_capacity(1024),
+            usage: Usage::default(),
         }
     }
 
@@ -152,7 +155,7 @@ impl Gemini {
             contents: Rc::clone(&self.messages),
             system_instruction: self.system_instruction.clone(),
             generation_config: GenerationConfig {
-                temperature: 1.0,
+                temperature: self.option.as_ref().map_or(1.0, |option| option.temperature),
                 top_p: 0.95,
                 max_output_tokens: 4096,
             },

@@ -1,7 +1,9 @@
 use std::io::Write;
 use std::path::PathBuf;
+use std::str::FromStr;
 
 use clap::Args;
+use regex::Regex;
 use tokio::fs;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncWriteExt;
@@ -11,11 +13,12 @@ use tracing::info;
 use crate::llm;
 use crate::llm::ChatEvent;
 use crate::llm::ChatListener;
+use crate::llm::ChatOption;
 use crate::util::exception::Exception;
 
 #[derive(Args)]
 pub struct Complete {
-    #[arg(help = "prompt file")]
+    #[arg(help = "prompt file path")]
     prompt: PathBuf,
 
     #[arg(long, help = "conf path")]
@@ -70,6 +73,10 @@ impl Complete {
                     return Err(Exception::ValidationError("system message must be at first".to_string()));
                 }
                 on_system_message = true;
+                if let Some(option) = parse_option(&line) {
+                    info!("option: {:?}", option);
+                    model.option(option);
+                }
             } else if line.starts_with("# prompt") {
                 if on_system_message {
                     info!("system message: {}", message);
@@ -107,5 +114,24 @@ impl Complete {
         prompt.write_all(message.as_bytes()).await?;
 
         Ok(())
+    }
+}
+
+fn parse_option(line: &str) -> Option<ChatOption> {
+    let regex = Regex::new(r".*temperature=(\d+\.\d+).*").unwrap();
+    if let Some(capture) = regex.captures(line) {
+        let temperature = f32::from_str(&capture[1]).unwrap();
+        Some(ChatOption { temperature })
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn parse_option() {
+        let option = super::parse_option("# system, temperature=2.0, top_p=0.95");
+        assert_eq!(option.unwrap().temperature, 2.0);
     }
 }

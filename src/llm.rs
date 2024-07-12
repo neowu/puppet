@@ -22,6 +22,11 @@ pub enum ChatEvent {
     End(Usage),
 }
 
+#[derive(Debug)]
+pub struct ChatOption {
+    pub temperature: f32,
+}
+
 #[derive(Default)]
 pub struct Usage {
     pub request_tokens: i32,
@@ -52,6 +57,13 @@ impl Model {
         match self {
             Model::ChatGPT(model) => model.system_message(message),
             Model::Gemini(model) => model.system_instruction(message),
+        }
+    }
+
+    pub fn option(&mut self, option: ChatOption) {
+        match self {
+            Model::ChatGPT(model) => model.option = Some(option),
+            Model::Gemini(model) => model.option = Some(option),
         }
     }
 }

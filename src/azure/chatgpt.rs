@@ -23,6 +23,7 @@ use crate::azure::chatgpt_api::Tool;
 use crate::llm::function::FunctionStore;
 use crate::llm::ChatEvent;
 use crate::llm::ChatListener;
+use crate::llm::ChatOption;
 use crate::llm::Usage;
 use crate::util::exception::Exception;
 use crate::util::http_client;
@@ -34,8 +35,9 @@ pub struct ChatGPT {
     messages: Rc<Vec<ChatRequestMessage>>,
     tools: Option<Rc<[Tool]>>,
     function_store: FunctionStore,
-    last_assistant_message: String,
+    pub option: Option<ChatOption>,
     pub listener: Option<Box<dyn ChatListener>>,
+    last_assistant_message: String,
 }
 
 type FunctionCall = HashMap<i64, (String, String, String)>;
@@ -61,6 +63,7 @@ impl ChatGPT {
             function_store,
             last_assistant_message: String::new(),
             listener: None,
+            option: None,
         }
     }
 
@@ -162,7 +165,7 @@ impl ChatGPT {
     async fn call_api(&mut self) -> Result<Response, Exception> {
         let request = ChatRequest {
             messages: Rc::clone(&self.messages),
-            temperature: 0.7,
+            temperature: self.option.as_ref().map_or(0.7, |option| option.temperature),
             top_p: 0.95,
             stream: true,
             // stream_options: Some(StreamOptions { include_usage: true }),
