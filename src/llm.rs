@@ -34,7 +34,7 @@ pub enum Model {
 }
 
 impl Model {
-    pub async fn chat(&mut self, message: String, files: Option<Vec<PathBuf>>) -> Result<(), Exception> {
+    pub async fn chat(&mut self, message: String, files: Option<Vec<PathBuf>>) -> Result<String, Exception> {
         match self {
             Model::ChatGPT(model) => model.chat(message, files).await,
             Model::Gemini(model) => model.chat(message, files).await,
@@ -51,7 +51,7 @@ impl Model {
     pub fn system_message(&mut self, message: String) {
         match self {
             Model::ChatGPT(model) => model.system_message(message),
-            Model::Gemini(model) => model.system_message(message),
+            Model::Gemini(model) => model.system_instruction(message),
         }
     }
 }

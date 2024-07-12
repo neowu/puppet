@@ -34,10 +34,11 @@ use crate::util::json;
 pub struct Gemini {
     url: String,
     messages: Rc<Vec<Content>>,
-    system_message: Option<Rc<Content>>,
+    system_instruction: Option<Rc<Content>>,
     tools: Option<Rc<[Tool]>>,
     function_store: FunctionStore,
     usage: Usage,
+    last_model_message: String,
     pub listener: Option<Box<dyn ChatListener>>,
 }
 
@@ -47,17 +48,18 @@ impl Gemini {
         Gemini {
             url,
             messages: Rc::new(vec![]),
-            system_message: None,
+            system_instruction: None,
             tools: function_store.declarations.is_empty().not().then_some(Rc::from(vec![Tool {
                 function_declarations: function_store.declarations.to_vec(),
             }])),
             function_store,
             usage: Usage::default(),
+            last_model_message: String::with_capacity(1024),
             listener: None,
         }
     }
 
-    pub async fn chat(&mut self, message: String, files: Option<Vec<PathBuf>>) -> Result<(), Exception> {
+    pub async fn chat(&mut self, message: String, files: Option<Vec<PathBuf>>) -> Result<String, Exception> {
         let data = inline_datas(files).await?;
         self.add_message(Content::new_user_text(message, data));
 
@@ -67,11 +69,11 @@ impl Gemini {
             self.add_message(Content::new_function_response(function_call.name, function_response));
             result = self.process().await?;
         }
-        Ok(())
+        Ok(self.last_model_message.to_string())
     }
 
-    pub fn system_message(&mut self, message: String) {
-        self.system_message = Some(Rc::new(Content::new_model_text(message)));
+    pub fn system_instruction(&mut self, message: String) {
+        self.system_instruction = Some(Rc::new(Content::new_model_text(message)));
     }
 
     async fn process(&mut self) -> Result<Option<FunctionCall>, Exception> {
@@ -126,6 +128,7 @@ impl Gemini {
         }
 
         if !model_message.is_empty() {
+            self.last_model_message = model_message.to_string();
             self.add_message(Content::new_model_text(model_message));
         }
 
@@ -144,7 +147,7 @@ impl Gemini {
     async fn call_api(&self) -> Result<Response, Exception> {
         let request = StreamGenerateContent {
             contents: Rc::clone(&self.messages),
-            system_instruction: self.system_message.clone(),
+            system_instruction: self.system_instruction.clone(),
             generation_config: GenerationConfig {
                 temperature: 1.0,
                 top_p: 0.95,

@@ -1,6 +1,7 @@
 use clap::Parser;
 use clap::Subcommand;
 use command::chat::Chat;
+use command::complete::Complete;
 use command::generate_zsh_completion::GenerateZshCompletion;
 use command::speak::Speak;
 use util::exception::Exception;
@@ -28,6 +29,8 @@ pub enum Command {
     Chat(Chat),
     #[command(about = "speak")]
     Speech(Speak),
+    #[command(about = "complete")]
+    Complete(Complete),
     #[command(about = "generate zsh completion")]
     GenerateZshCompletion(GenerateZshCompletion),
 }
@@ -39,6 +42,7 @@ async fn main() -> Result<(), Exception> {
     match cli.command {
         Some(Command::Chat(command)) => command.execute().await,
         Some(Command::Speech(command)) => command.execute().await,
+        Some(Command::Complete(command)) => command.execute().await,
         Some(Command::GenerateZshCompletion(command)) => command.execute(),
         None => panic!("not implemented"),
     }

@@ -34,6 +34,7 @@ pub struct ChatGPT {
     messages: Rc<Vec<ChatRequestMessage>>,
     tools: Option<Rc<[Tool]>>,
     function_store: FunctionStore,
+    last_assistant_message: String,
     pub listener: Option<Box<dyn ChatListener>>,
 }
 
@@ -58,11 +59,12 @@ impl ChatGPT {
             messages: Rc::new(vec![]),
             tools,
             function_store,
+            last_assistant_message: String::new(),
             listener: None,
         }
     }
 
-    pub async fn chat(&mut self, message: String, files: Option<Vec<PathBuf>>) -> Result<(), Exception> {
+    pub async fn chat(&mut self, message: String, files: Option<Vec<PathBuf>>) -> Result<String, Exception> {
         let image_urls = image_urls(files).await?;
         self.add_message(ChatRequestMessage::new_user_message(message, image_urls));
 
@@ -82,7 +84,7 @@ impl ChatGPT {
             }
             self.process().await?;
         }
-        Ok(())
+        Ok(self.last_assistant_message.to_string())
     }
 
     pub fn system_message(&mut self, message: String) {
@@ -143,6 +145,7 @@ impl ChatGPT {
         }
 
         if !assistant_message.is_empty() {
+            self.last_assistant_message = assistant_message.to_string();
             self.add_message(ChatRequestMessage::new_message(Role::Assistant, assistant_message));
         }
 
