@@ -168,7 +168,7 @@ impl ChatGPT {
             // stream_options: Some(StreamOptions { include_usage: true }),
             stream_options: None,
             stop: None,
-            max_tokens: 800,
+            max_tokens: 4096,
             presence_penalty: 0.0,
             frequency_penalty: 0.0,
             tool_choice: self.tools.is_some().then_some("auto".to_string()),

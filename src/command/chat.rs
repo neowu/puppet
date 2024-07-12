@@ -1,4 +1,3 @@
-use std::io;
 use std::io::Write;
 use std::mem;
 use std::path::PathBuf;
@@ -74,6 +73,6 @@ impl Chat {
 
 fn print_flush(message: &str) -> Result<(), Exception> {
     print!("{message}");
-    io::stdout().flush()?;
+    std::io::stdout().flush()?;
     Ok(())
 }

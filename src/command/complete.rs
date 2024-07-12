@@ -70,15 +70,25 @@ impl Complete {
                     return Err(Exception::ValidationError("system message must be at first".to_string()));
                 }
                 on_system_message = true;
-            } else if line.starts_with("---") || line.starts_with("# file: ") {
+            } else if line.starts_with("# prompt") {
                 if on_system_message {
                     info!("system message: {}", message);
                     model.system_message(message);
                     message = String::new();
                     on_system_message = false;
                 }
-                if line.starts_with("# file: ") {
-                    let file = PathBuf::from(line.strip_prefix("# file: ").unwrap().to_string());
+            } else if line.starts_with("# anwser") {
+                break;
+            } else if line.starts_with("> file: ") {
+                let file = self.prompt.with_file_name(line.strip_prefix("> file: ").unwrap());
+                let extension = file
+                    .extension()
+                    .ok_or_else(|| Exception::ValidationError(format!("file must have extension, path={}", file.to_string_lossy())))?
+                    .to_str()
+                    .unwrap();
+                if extension == "txt" {
+                    message.push_str(&fs::read_to_string(file).await?)
+                } else {
                     info!("file: {}", file.to_string_lossy());
                     files.push(file);
                 }
@@ -93,7 +103,7 @@ impl Complete {
         let message = model.chat(message, files).await?;
 
         let mut prompt = fs::OpenOptions::new().append(true).open(&self.prompt).await?;
-        prompt.write_all(b"\n---\n\n").await?;
+        prompt.write_all(format!("\n# anwser ({})\n\n", self.name).as_bytes()).await?;
         prompt.write_all(message.as_bytes()).await?;
 
         Ok(())

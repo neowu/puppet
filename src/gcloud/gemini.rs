@@ -61,6 +61,9 @@ impl Gemini {
 
     pub async fn chat(&mut self, message: String, files: Option<Vec<PathBuf>>) -> Result<String, Exception> {
         let data = inline_datas(files).await?;
+        if data.is_some() {
+            self.tools = None; // function call is not supported with inline data
+        }
         self.add_message(Content::new_user_text(message, data));
 
         let mut result = self.process().await?;
