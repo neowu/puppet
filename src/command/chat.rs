@@ -1,6 +1,6 @@
 use std::io;
 use std::io::Write;
-use std::path::Path;
+use std::mem;
 use std::path::PathBuf;
 
 use clap::Args;
@@ -11,7 +11,7 @@ use tracing::info;
 
 use crate::llm;
 use crate::llm::ChatEvent;
-use crate::llm::ChatHandler;
+use crate::llm::ChatListener;
 use crate::util::exception::Exception;
 
 #[derive(Args)]
@@ -25,7 +25,7 @@ pub struct Chat {
 
 struct ConsoleHandler;
 
-impl ChatHandler for ConsoleHandler {
+impl ChatListener for ConsoleHandler {
     fn on_event(&self, event: ChatEvent) {
         match event {
             ChatEvent::Delta(data) => {
@@ -46,11 +46,12 @@ impl Chat {
     pub async fn execute(&self) -> Result<(), Exception> {
         let config = llm::load(&self.conf).await?;
         let mut model = config.create(&self.name)?;
-        let handler = ConsoleHandler {};
+        model.listener(Box::new(ConsoleHandler));
 
         let reader = BufReader::new(stdin());
         let mut lines = reader.lines();
 
+        let mut files: Vec<PathBuf> = vec![];
         loop {
             print_flush("> ")?;
             let Some(line) = lines.next_line().await? else { break };
@@ -58,9 +59,12 @@ impl Chat {
                 break;
             }
             if line.starts_with("/file ") {
-                model.file(Path::new(line.strip_prefix("/file ").unwrap()))?;
+                let file = PathBuf::from(line.strip_prefix("/file ").unwrap().to_string());
+                println!("added file, path={}", file.to_string_lossy());
+                files.push(file);
             } else {
-                model.chat(line, &handler).await?;
+                let files = mem::take(&mut files).into_iter().map(Some).collect();
+                model.chat(line, files).await?;
             }
         }
 

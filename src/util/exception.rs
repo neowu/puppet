@@ -2,6 +2,7 @@ use std::backtrace::Backtrace;
 use std::error::Error;
 use std::fmt;
 use std::io;
+use std::str::Utf8Error;
 
 use tokio::sync::mpsc::error::SendError;
 use tokio::task::JoinError;
@@ -66,6 +67,12 @@ impl From<JoinError> for Exception {
 
 impl<T> From<SendError<T>> for Exception {
     fn from(err: SendError<T>) -> Self {
+        Exception::unexpected(err)
+    }
+}
+
+impl From<Utf8Error> for Exception {
+    fn from(err: Utf8Error) -> Self {
         Exception::unexpected(err)
     }
 }

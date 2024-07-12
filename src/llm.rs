@@ -1,8 +1,8 @@
 use std::path::Path;
+use std::path::PathBuf;
 
 use tokio::fs;
 use tracing::info;
-use tracing::warn;
 
 use crate::azure::chatgpt::ChatGPT;
 use crate::gcloud::gemini::Gemini;
@@ -13,7 +13,7 @@ use crate::util::json;
 pub mod config;
 pub mod function;
 
-pub trait ChatHandler {
+pub trait ChatListener {
     fn on_event(&self, event: ChatEvent);
 }
 
@@ -34,20 +34,24 @@ pub enum Model {
 }
 
 impl Model {
-    pub async fn chat(&mut self, message: String, handler: &impl ChatHandler) -> Result<(), Exception> {
+    pub async fn chat(&mut self, message: String, files: Option<Vec<PathBuf>>) -> Result<(), Exception> {
         match self {
-            Model::ChatGPT(model) => model.chat(message, handler).await,
-            Model::Gemini(model) => model.chat(message, handler).await,
+            Model::ChatGPT(model) => model.chat(message, files).await,
+            Model::Gemini(model) => model.chat(message, files).await,
         }
     }
 
-    pub fn file(&mut self, path: &Path) -> Result<(), Exception> {
+    pub fn listener(&mut self, listener: Box<dyn ChatListener>) {
         match self {
-            Model::ChatGPT(_model) => {
-                warn!("ChatGPT does not support uploading file");
-                Ok(())
-            }
-            Model::Gemini(model) => model.file(path),
+            Model::ChatGPT(model) => model.listener = Some(listener),
+            Model::Gemini(model) => model.listener = Some(listener),
+        }
+    }
+
+    pub fn system_message(&mut self, message: String) {
+        match self {
+            Model::ChatGPT(model) => model.system_message(message),
+            Model::Gemini(model) => model.system_message(message),
         }
     }
 }

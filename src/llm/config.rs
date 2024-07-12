@@ -35,12 +35,11 @@ impl Config {
 
         let function_store = load_function_store(config);
 
-        let model = match config.provider {
+        let mut model = match config.provider {
             Provider::Azure => Model::ChatGPT(ChatGPT::new(
                 config.endpoint.to_string(),
                 config.params.get("model").unwrap().to_string(),
                 config.params.get("api_key").unwrap().to_string(),
-                config.system_message.clone(),
                 function_store,
             )),
             Provider::GCloud => Model::Gemini(Gemini::new(
@@ -48,10 +47,13 @@ impl Config {
                 config.params.get("project").unwrap().to_string(),
                 config.params.get("location").unwrap().to_string(),
                 config.params.get("model").unwrap().to_string(),
-                config.system_message.clone(),
                 function_store,
             )),
         };
+
+        if let Some(message) = config.system_message.as_ref() {
+            model.system_message(message.to_string());
+        }
 
         Ok(model)
     }

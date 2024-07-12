@@ -23,9 +23,33 @@ pub struct Content {
 }
 
 impl Content {
-    pub fn new_text(role: Role, message: String) -> Self {
+    pub fn new_user_text(message: String, data: Option<Vec<InlineData>>) -> Self {
+        let mut parts: Vec<Part> = vec![];
+        if let Some(data) = data {
+            parts.append(
+                &mut data
+                    .into_iter()
+                    .map(|d| Part {
+                        text: None,
+                        inline_data: Some(d),
+                        function_call: None,
+                        function_response: None,
+                    })
+                    .collect(),
+            );
+        }
+        parts.push(Part {
+            text: Some(message),
+            inline_data: None,
+            function_call: None,
+            function_response: None,
+        });
+        Self { role: Role::User, parts }
+    }
+
+    pub fn new_model_text(message: String) -> Self {
         Self {
-            role,
+            role: Role::Model,
             parts: vec![Part {
                 text: Some(message),
                 inline_data: None,
@@ -57,28 +81,6 @@ impl Content {
                 function_response: None,
             }],
         }
-    }
-
-    pub fn new_text_with_inline_data(message: String, data: Vec<InlineData>) -> Self {
-        let mut parts: Vec<Part> = vec![];
-        parts.append(
-            &mut data
-                .into_iter()
-                .map(|d| Part {
-                    text: None,
-                    inline_data: Some(d),
-                    function_call: None,
-                    function_response: None,
-                })
-                .collect(),
-        );
-        parts.push(Part {
-            text: Some(message),
-            inline_data: None,
-            function_call: None,
-            function_response: None,
-        });
-        Self { role: Role::User, parts }
     }
 }
 

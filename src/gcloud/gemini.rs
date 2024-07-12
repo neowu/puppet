@@ -1,7 +1,7 @@
-use std::fs;
 use std::mem;
 use std::ops::Not;
 use std::path::Path;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::str;
 
@@ -9,6 +9,7 @@ use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
 use bytes::Bytes;
 use reqwest::Response;
+use tokio::fs;
 use tokio::sync::mpsc::channel;
 use tokio::sync::mpsc::Receiver;
 use tokio::sync::mpsc::Sender;
@@ -18,14 +19,13 @@ use super::gemini_api::Content;
 use super::gemini_api::FunctionCall;
 use super::gemini_api::GenerationConfig;
 use super::gemini_api::InlineData;
-use super::gemini_api::Role;
 use super::gemini_api::StreamGenerateContent;
 use super::gemini_api::Tool;
 use super::token;
 use crate::gcloud::gemini_api::GenerateContentResponse;
 use crate::llm::function::FunctionStore;
 use crate::llm::ChatEvent;
-use crate::llm::ChatHandler;
+use crate::llm::ChatListener;
 use crate::llm::Usage;
 use crate::util::exception::Exception;
 use crate::util::http_client;
@@ -37,90 +37,55 @@ pub struct Gemini {
     system_message: Option<Rc<Content>>,
     tools: Option<Rc<[Tool]>>,
     function_store: FunctionStore,
-    data: Vec<InlineData>,
     usage: Usage,
+    pub listener: Option<Box<dyn ChatListener>>,
 }
 
 impl Gemini {
-    pub fn new(
-        endpoint: String,
-        project: String,
-        location: String,
-        model: String,
-        system_message: Option<String>,
-        function_store: FunctionStore,
-    ) -> Self {
+    pub fn new(endpoint: String, project: String, location: String, model: String, function_store: FunctionStore) -> Self {
         let url = format!("{endpoint}/v1/projects/{project}/locations/{location}/publishers/google/models/{model}:streamGenerateContent");
         Gemini {
             url,
             messages: Rc::new(vec![]),
-            system_message: system_message.map(|message| Rc::new(Content::new_text(Role::Model, message))),
+            system_message: None,
             tools: function_store.declarations.is_empty().not().then_some(Rc::from(vec![Tool {
                 function_declarations: function_store.declarations.to_vec(),
             }])),
             function_store,
-            data: vec![],
             usage: Usage::default(),
+            listener: None,
         }
     }
 
-    pub async fn chat(&mut self, message: String, handler: &impl ChatHandler) -> Result<(), Exception> {
-        let data = mem::take(&mut self.data);
-        let mut result = self.process(Content::new_text_with_inline_data(message, data), handler).await?;
+    pub async fn chat(&mut self, message: String, files: Option<Vec<PathBuf>>) -> Result<(), Exception> {
+        let data = inline_datas(files).await?;
+        self.add_message(Content::new_user_text(message, data));
 
+        let mut result = self.process().await?;
         while let Some(function_call) = result {
             let function_response = self.function_store.call_function(function_call.name.clone(), function_call.args).await?;
-            let content = Content::new_function_response(function_call.name, function_response);
-            result = self.process(content, handler).await?;
+            self.add_message(Content::new_function_response(function_call.name, function_response));
+            result = self.process().await?;
         }
         Ok(())
     }
 
-    pub fn file(&mut self, path: &Path) -> Result<(), Exception> {
-        let extension = path
-            .extension()
-            .ok_or_else(|| Exception::ValidationError(format!("file must have extension, path={}", path.to_string_lossy())))?
-            .to_str()
-            .unwrap();
-        let content = fs::read(path)?;
-        let mime_type = match extension {
-            "jpg" => Ok("image/jpeg".to_string()),
-            "png" => Ok("image/png".to_string()),
-            "pdf" => Ok("application/pdf".to_string()),
-            _ => Err(Exception::ValidationError(format!(
-                "not supported extension, path={}",
-                path.to_string_lossy()
-            ))),
-        }?;
-        info!(
-            "file added, will submit with next message, mime_type={mime_type}, path={}",
-            path.to_string_lossy()
-        );
-        self.data.push(InlineData {
-            mime_type,
-            data: BASE64_STANDARD.encode(content),
-        });
-        Ok(())
+    pub fn system_message(&mut self, message: String) {
+        self.system_message = Some(Rc::new(Content::new_model_text(message)));
     }
 
-    async fn process(&mut self, content: Content, handler: &impl ChatHandler) -> Result<Option<FunctionCall>, Exception> {
-        self.add_message(content);
+    async fn process(&mut self) -> Result<Option<FunctionCall>, Exception> {
+        let (tx, rx) = channel(64);
 
         let response = self.call_api().await?;
-
-        let (tx, rx) = channel(64);
         let handle = tokio::spawn(read_response_stream(response, tx));
-        let function_call = self.process_response(rx, handler).await?;
+        let function_call = self.process_response(rx).await?;
         handle.await??;
 
         Ok(function_call)
     }
 
-    async fn process_response(
-        &mut self,
-        mut rx: Receiver<GenerateContentResponse>,
-        handler: &impl ChatHandler,
-    ) -> Result<Option<FunctionCall>, Exception> {
+    async fn process_response(&mut self, mut rx: Receiver<GenerateContentResponse>) -> Result<Option<FunctionCall>, Exception> {
         let mut model_message = String::new();
         let mut function_call = None;
         while let Some(response) = rx.recv().await {
@@ -148,7 +113,9 @@ impl Gemini {
                     function_call = Some(call);
                 } else if let Some(text) = part.text {
                     model_message.push_str(&text);
-                    handler.on_event(ChatEvent::Delta(text));
+                    if let Some(listener) = self.listener.as_ref() {
+                        listener.on_event(ChatEvent::Delta(text));
+                    }
                 }
             }
         }
@@ -159,11 +126,13 @@ impl Gemini {
         }
 
         if !model_message.is_empty() {
-            self.add_message(Content::new_text(Role::Model, model_message));
+            self.add_message(Content::new_model_text(model_message));
         }
 
         let usage = mem::take(&mut self.usage);
-        handler.on_event(ChatEvent::End(usage));
+        if let Some(listener) = self.listener.as_ref() {
+            listener.on_event(ChatEvent::End(usage));
+        }
 
         Ok(None)
     }
@@ -197,7 +166,7 @@ impl Gemini {
 
         let status = response.status();
         if status != 200 {
-            let body = str::from_utf8(&body).unwrap();
+            let body = str::from_utf8(&body)?;
             info!("body={}", body);
             let response_text = response.text().await?;
             return Err(Exception::ExternalError(format!(
@@ -230,4 +199,39 @@ async fn read_response_stream(response: Response, tx: Sender<GenerateContentResp
 fn is_valid_json(content: &str) -> bool {
     let result: serde_json::Result<serde::de::IgnoredAny> = serde_json::from_str(content);
     result.is_ok()
+}
+
+async fn inline_datas(files: Option<Vec<PathBuf>>) -> Result<Option<Vec<InlineData>>, Exception> {
+    let data = if let Some(paths) = files {
+        let mut data = Vec::with_capacity(paths.len());
+        for path in paths {
+            data.push(inline_data(&path).await?);
+        }
+        Some(data)
+    } else {
+        None
+    };
+    Ok(data)
+}
+
+async fn inline_data(path: &Path) -> Result<InlineData, Exception> {
+    let extension = path
+        .extension()
+        .ok_or_else(|| Exception::ValidationError(format!("file must have extension, path={}", path.to_string_lossy())))?
+        .to_str()
+        .unwrap();
+    let content = fs::read(path).await?;
+    let mime_type = match extension {
+        "jpg" => Ok("image/jpeg".to_string()),
+        "png" => Ok("image/png".to_string()),
+        "pdf" => Ok("application/pdf".to_string()),
+        _ => Err(Exception::ValidationError(format!(
+            "not supported extension, path={}",
+            path.to_string_lossy()
+        ))),
+    }?;
+    Ok(InlineData {
+        mime_type,
+        data: BASE64_STANDARD.encode(content),
+    })
 }
