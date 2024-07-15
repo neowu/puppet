@@ -1,4 +1,5 @@
 use std::io::Write;
+use std::mem;
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -48,6 +49,12 @@ impl ChatListener for Listener {
     }
 }
 
+enum ParserState {
+    System,
+    User,
+    Assistant,
+}
+
 impl Complete {
     pub async fn execute(&self) -> Result<(), Exception> {
         let config = llm::load(&self.conf).await?;
@@ -60,7 +67,7 @@ impl Complete {
 
         let mut files: Vec<PathBuf> = vec![];
         let mut message = String::new();
-        let mut on_system_message = false;
+        let mut state = ParserState::User;
         loop {
             let Some(line) = lines.next_line().await? else { break };
 
@@ -72,20 +79,17 @@ impl Complete {
                 if !message.is_empty() {
                     return Err(Exception::ValidationError("system message must be at first".to_string()));
                 }
-                on_system_message = true;
+                state = ParserState::System;
                 if let Some(option) = parse_option(&line) {
                     info!("option: {:?}", option);
                     model.option(option);
                 }
-            } else if line.starts_with("# prompt") {
-                if on_system_message {
-                    info!("system message: {}", message);
-                    model.system_message(message);
-                    message = String::new();
-                    on_system_message = false;
-                }
-            } else if line.starts_with("# anwser") {
-                break;
+            } else if line.starts_with("# user") {
+                add_message(&mut model, &state, mem::take(&mut message), mem::take(&mut files)).await?;
+                state = ParserState::User;
+            } else if line.starts_with("# assistant") {
+                add_message(&mut model, &state, mem::take(&mut message), mem::take(&mut files)).await?;
+                state = ParserState::Assistant;
             } else if line.starts_with("> file: ") {
                 let file = self.prompt.with_file_name(line.strip_prefix("> file: ").unwrap());
                 let extension = file
@@ -94,7 +98,9 @@ impl Complete {
                     .to_str()
                     .unwrap();
                 if extension == "txt" {
-                    message.push_str(&fs::read_to_string(file).await?)
+                    message.push_str(&format!("> start of file: {}\n", &file.to_string_lossy()));
+                    message.push_str(&fs::read_to_string(&file).await?);
+                    message.push_str(&format!("> end of file: {}\n", &file.to_string_lossy()));
                 } else {
                     info!("file: {}", file.to_string_lossy());
                     files.push(file);
@@ -105,16 +111,39 @@ impl Complete {
             }
         }
 
-        info!("prompt: {}", message);
-        let files = files.into_iter().map(Some).collect();
-        let message = model.chat(message, files).await?;
+        add_message(&mut model, &state, message, files).await?;
+        let message = model.chat().await?;
 
         let mut prompt = fs::OpenOptions::new().append(true).open(&self.prompt).await?;
-        prompt.write_all(format!("\n# anwser ({})\n\n", self.name).as_bytes()).await?;
+        prompt.write_all(format!("\n# assistant ({})\n\n", self.name).as_bytes()).await?;
         prompt.write_all(message.as_bytes()).await?;
 
         Ok(())
     }
+}
+
+async fn add_message(model: &mut llm::Model, state: &ParserState, message: String, files: Vec<PathBuf>) -> Result<(), Exception> {
+    match state {
+        ParserState::System => {
+            info!("system message: {}", message);
+            model.system_message(message);
+        }
+        ParserState::User => {
+            info!("user message: {}", message);
+            model.add_user_message(message, files.into_iter().map(Some).collect()).await?;
+        }
+        ParserState::Assistant => {
+            if !files.is_empty() {
+                return Err(Exception::ValidationError(format!(
+                    "cannot include file in assistant message, files={:?}",
+                    files
+                )));
+            }
+            info!("assistent message: {}", message);
+            model.add_assistant_message(message);
+        }
+    }
+    Ok(())
 }
 
 fn parse_option(line: &str) -> Option<ChatOption> {

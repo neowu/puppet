@@ -63,7 +63,8 @@ impl Chat {
                 files.push(file);
             } else {
                 let files = mem::take(&mut files).into_iter().map(Some).collect();
-                model.chat(line, files).await?;
+                model.add_user_message(line, files).await?;
+                model.chat().await?;
             }
         }
 

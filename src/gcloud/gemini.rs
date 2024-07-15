@@ -62,13 +62,7 @@ impl Gemini {
         }
     }
 
-    pub async fn chat(&mut self, message: String, files: Option<Vec<PathBuf>>) -> Result<String, Exception> {
-        let data = inline_datas(files).await?;
-        if data.is_some() {
-            self.tools = None; // function call is not supported with inline data
-        }
-        self.add_message(Content::new_user_text(message, data));
-
+    pub async fn chat(&mut self) -> Result<String, Exception> {
         let mut result = self.process().await?;
         while let Some(function_call) = result {
             let function_response = self.function_store.call_function(function_call.name.clone(), function_call.args).await?;
@@ -78,8 +72,21 @@ impl Gemini {
         Ok(self.last_model_message.to_string())
     }
 
-    pub fn system_instruction(&mut self, message: String) {
-        self.system_instruction = Some(Rc::new(Content::new_model_text(message)));
+    pub fn system_instruction(&mut self, text: String) {
+        self.system_instruction = Some(Rc::new(Content::new_model_text(text)));
+    }
+
+    pub async fn add_user_text(&mut self, text: String, files: Option<Vec<PathBuf>>) -> Result<(), Exception> {
+        let data = inline_datas(files).await?;
+        if data.is_some() {
+            self.tools = None; // function call is not supported with inline data
+        }
+        self.add_message(Content::new_user_text(text, data));
+        Ok(())
+    }
+
+    pub fn add_model_text(&mut self, text: String) {
+        self.add_message(Content::new_model_text(text));
     }
 
     async fn process(&mut self) -> Result<Option<FunctionCall>, Exception> {

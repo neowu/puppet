@@ -39,10 +39,10 @@ pub enum Model {
 }
 
 impl Model {
-    pub async fn chat(&mut self, message: String, files: Option<Vec<PathBuf>>) -> Result<String, Exception> {
+    pub async fn chat(&mut self) -> Result<String, Exception> {
         match self {
-            Model::ChatGPT(model) => model.chat(message, files).await,
-            Model::Gemini(model) => model.chat(message, files).await,
+            Model::ChatGPT(model) => model.chat().await,
+            Model::Gemini(model) => model.chat().await,
         }
     }
 
@@ -64,6 +64,20 @@ impl Model {
         match self {
             Model::ChatGPT(model) => model.option = Some(option),
             Model::Gemini(model) => model.option = Some(option),
+        }
+    }
+
+    pub async fn add_user_message(&mut self, message: String, files: Option<Vec<PathBuf>>) -> Result<(), Exception> {
+        match self {
+            Model::ChatGPT(model) => model.add_user_message(message, files).await,
+            Model::Gemini(model) => model.add_user_text(message, files).await,
+        }
+    }
+
+    pub fn add_assistant_message(&mut self, message: String) {
+        match self {
+            Model::ChatGPT(model) => model.add_assistant_message(message),
+            Model::Gemini(model) => model.add_model_text(message),
         }
     }
 }

@@ -23,7 +23,7 @@ pub struct Content {
 }
 
 impl Content {
-    pub fn new_user_text(message: String, data: Option<Vec<InlineData>>) -> Self {
+    pub fn new_user_text(text: String, data: Option<Vec<InlineData>>) -> Self {
         let mut parts: Vec<Part> = vec![];
         if let Some(data) = data {
             parts.append(
@@ -39,7 +39,7 @@ impl Content {
             );
         }
         parts.push(Part {
-            text: Some(message),
+            text: Some(text),
             inline_data: None,
             function_call: None,
             function_response: None,
@@ -47,11 +47,11 @@ impl Content {
         Self { role: Role::User, parts }
     }
 
-    pub fn new_model_text(message: String) -> Self {
+    pub fn new_model_text(text: String) -> Self {
         Self {
             role: Role::Model,
             parts: vec![Part {
-                text: Some(message),
+                text: Some(text),
                 inline_data: None,
                 function_call: None,
                 function_response: None,

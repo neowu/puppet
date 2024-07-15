@@ -67,10 +67,7 @@ impl ChatGPT {
         }
     }
 
-    pub async fn chat(&mut self, message: String, files: Option<Vec<PathBuf>>) -> Result<String, Exception> {
-        let image_urls = image_urls(files).await?;
-        self.add_message(ChatRequestMessage::new_user_message(message, image_urls));
-
+    pub async fn chat(&mut self) -> Result<String, Exception> {
         let result = self.process().await?;
         if let Some(calls) = result {
             self.add_message(ChatRequestMessage::new_function_call(&calls));
@@ -98,6 +95,16 @@ impl ChatGPT {
             }
         }
         messages.insert(0, ChatRequestMessage::new_message(Role::System, message))
+    }
+
+    pub async fn add_user_message(&mut self, message: String, files: Option<Vec<PathBuf>>) -> Result<(), Exception> {
+        let image_urls = image_urls(files).await?;
+        self.add_message(ChatRequestMessage::new_user_message(message, image_urls));
+        Ok(())
+    }
+
+    pub fn add_assistant_message(&mut self, message: String) {
+        self.add_message(ChatRequestMessage::new_message(Role::Assistant, message));
     }
 
     fn add_message(&mut self, message: ChatRequestMessage) {
