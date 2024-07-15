@@ -1,4 +1,3 @@
-use std::io::Write;
 use std::mem;
 use std::path::PathBuf;
 
@@ -6,11 +5,10 @@ use clap::Args;
 use tokio::io::stdin;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::BufReader;
-use tracing::info;
 
 use crate::llm;
-use crate::llm::ChatEvent;
-use crate::llm::ChatListener;
+use crate::llm::ConsolePrinter;
+use crate::util::console;
 use crate::util::exception::Exception;
 
 #[derive(Args)]
@@ -22,38 +20,19 @@ pub struct Chat {
     name: String,
 }
 
-struct ConsoleHandler;
-
-impl ChatListener for ConsoleHandler {
-    fn on_event(&self, event: ChatEvent) {
-        match event {
-            ChatEvent::Delta(data) => {
-                print_flush(&data).unwrap();
-            }
-            ChatEvent::End(usage) => {
-                println!();
-                info!(
-                    "usage, request_tokens={}, response_tokens={}",
-                    usage.request_tokens, usage.response_tokens
-                );
-            }
-        }
-    }
-}
-
 impl Chat {
     pub async fn execute(&self) -> Result<(), Exception> {
         let config = llm::load(&self.conf).await?;
-        let mut model = config.create(&self.name)?;
-        model.listener(Box::new(ConsoleHandler));
+        let mut model = config.create(&self.name, Some(ConsolePrinter))?;
 
         let reader = BufReader::new(stdin());
         let mut lines = reader.lines();
-
         let mut files: Vec<PathBuf> = vec![];
         loop {
-            print_flush("> ")?;
-            let Some(line) = lines.next_line().await? else { break };
+            console::print("> ").await?;
+            let Some(line) = lines.next_line().await? else {
+                break;
+            };
             if line.starts_with("/quit") {
                 break;
             }
@@ -70,10 +49,4 @@ impl Chat {
 
         Ok(())
     }
-}
-
-fn print_flush(message: &str) -> Result<(), Exception> {
-    print!("{message}");
-    std::io::stdout().flush()?;
-    Ok(())
 }

@@ -32,20 +32,23 @@ use crate::util::exception::Exception;
 use crate::util::http_client;
 use crate::util::json;
 
-pub struct Gemini {
+pub struct Gemini<L>
+where
+    L: ChatListener,
+{
     url: String,
     messages: Rc<Vec<Content>>,
     system_instruction: Option<Rc<Content>>,
     tools: Option<Rc<[Tool]>>,
     function_store: FunctionStore,
+    listener: Option<L>,
     pub option: Option<ChatOption>,
-    pub listener: Option<Box<dyn ChatListener>>,
     last_model_message: String,
     usage: Usage,
 }
 
-impl Gemini {
-    pub fn new(endpoint: String, project: String, location: String, model: String, function_store: FunctionStore) -> Self {
+impl<L: ChatListener> Gemini<L> {
+    pub fn new(endpoint: String, project: String, location: String, model: String, function_store: FunctionStore, listener: Option<L>) -> Self {
         let url = format!("{endpoint}/v1/projects/{project}/locations/{location}/publishers/google/models/{model}:streamGenerateContent");
         Gemini {
             url,
@@ -55,8 +58,8 @@ impl Gemini {
                 function_declarations: function_store.declarations.to_vec(),
             }])),
             function_store,
+            listener,
             option: None,
-            listener: None,
             last_model_message: String::with_capacity(1024),
             usage: Usage::default(),
         }
@@ -129,7 +132,7 @@ impl Gemini {
                 } else if let Some(text) = part.text {
                     model_message.push_str(&text);
                     if let Some(listener) = self.listener.as_ref() {
-                        listener.on_event(ChatEvent::Delta(text));
+                        listener.on_event(ChatEvent::Delta(text)).await?;
                     }
                 }
             }
@@ -147,7 +150,7 @@ impl Gemini {
 
         let usage = mem::take(&mut self.usage);
         if let Some(listener) = self.listener.as_ref() {
-            listener.on_event(ChatEvent::End(usage));
+            listener.on_event(ChatEvent::End(usage)).await?;
         }
 
         Ok(None)

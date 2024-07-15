@@ -4,6 +4,7 @@ use rand::Rng;
 use serde::Deserialize;
 use serde_json::json;
 
+use super::ChatListener;
 use crate::azure::chatgpt::ChatGPT;
 use crate::gcloud::gemini::Gemini;
 use crate::llm::function::Function;
@@ -27,7 +28,10 @@ pub struct ModelConfig {
 }
 
 impl Config {
-    pub fn create(&self, name: &str) -> Result<Model, Exception> {
+    pub fn create<L>(&self, name: &str, listener: Option<L>) -> Result<Model<L>, Exception>
+    where
+        L: ChatListener,
+    {
         let config = self
             .models
             .get(name)
@@ -41,6 +45,7 @@ impl Config {
                 config.params.get("model").unwrap().to_string(),
                 config.params.get("api_key").unwrap().to_string(),
                 function_store,
+                listener,
             )),
             Provider::GCloud => Model::Gemini(Gemini::new(
                 config.endpoint.to_string(),
@@ -48,6 +53,7 @@ impl Config {
                 config.params.get("location").unwrap().to_string(),
                 config.params.get("model").unwrap().to_string(),
                 function_store,
+                listener,
             )),
         };
 

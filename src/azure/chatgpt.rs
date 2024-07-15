@@ -29,21 +29,24 @@ use crate::util::exception::Exception;
 use crate::util::http_client;
 use crate::util::json;
 
-pub struct ChatGPT {
+pub struct ChatGPT<L>
+where
+    L: ChatListener,
+{
     url: String,
     api_key: String,
     messages: Rc<Vec<ChatRequestMessage>>,
     tools: Option<Rc<[Tool]>>,
     function_store: FunctionStore,
+    listener: Option<L>,
     pub option: Option<ChatOption>,
-    pub listener: Option<Box<dyn ChatListener>>,
     last_assistant_message: String,
 }
 
 type FunctionCall = HashMap<i64, (String, String, String)>;
 
-impl ChatGPT {
-    pub fn new(endpoint: String, model: String, api_key: String, function_store: FunctionStore) -> Self {
+impl<L: ChatListener> ChatGPT<L> {
+    pub fn new(endpoint: String, model: String, api_key: String, function_store: FunctionStore, listener: Option<L>) -> Self {
         let url = format!("{endpoint}/openai/deployments/{model}/chat/completions?api-version=2024-06-01");
         let tools: Option<Rc<[Tool]>> = function_store.declarations.is_empty().not().then_some(
             function_store
@@ -61,8 +64,8 @@ impl ChatGPT {
             messages: Rc::new(vec![]),
             tools,
             function_store,
+            listener,
             last_assistant_message: String::new(),
-            listener: None,
             option: None,
         }
     }
@@ -141,7 +144,7 @@ impl ChatGPT {
                     assistant_message.push_str(&value);
 
                     if let Some(listener) = self.listener.as_ref() {
-                        listener.on_event(ChatEvent::Delta(value));
+                        listener.on_event(ChatEvent::Delta(value)).await?;
                     }
                 }
             }
@@ -163,7 +166,7 @@ impl ChatGPT {
             Ok(Some(function_calls))
         } else {
             if let Some(listener) = self.listener.as_ref() {
-                listener.on_event(ChatEvent::End(usage));
+                listener.on_event(ChatEvent::End(usage)).await?;
             }
             Ok(None)
         }

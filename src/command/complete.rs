@@ -1,4 +1,3 @@
-use std::io::Write;
 use std::mem;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -12,9 +11,9 @@ use tokio::io::BufReader;
 use tracing::info;
 
 use crate::llm;
-use crate::llm::ChatEvent;
 use crate::llm::ChatListener;
 use crate::llm::ChatOption;
+use crate::llm::ConsolePrinter;
 use crate::util::exception::Exception;
 
 #[derive(Args)]
@@ -29,26 +28,6 @@ pub struct Complete {
     name: String,
 }
 
-struct Listener;
-
-impl ChatListener for Listener {
-    fn on_event(&self, event: ChatEvent) {
-        match event {
-            ChatEvent::Delta(data) => {
-                print!("{data}");
-                let _ = std::io::stdout().flush();
-            }
-            ChatEvent::End(usage) => {
-                println!();
-                info!(
-                    "usage, request_tokens={}, response_tokens={}",
-                    usage.request_tokens, usage.response_tokens
-                );
-            }
-        }
-    }
-}
-
 enum ParserState {
     System,
     User,
@@ -58,8 +37,7 @@ enum ParserState {
 impl Complete {
     pub async fn execute(&self) -> Result<(), Exception> {
         let config = llm::load(&self.conf).await?;
-        let mut model = config.create(&self.name)?;
-        model.listener(Box::new(Listener));
+        let mut model = config.create(&self.name, Some(ConsolePrinter))?;
 
         let prompt = fs::OpenOptions::new().read(true).open(&self.prompt).await?;
         let reader = BufReader::new(prompt);
@@ -68,9 +46,7 @@ impl Complete {
         let mut files: Vec<PathBuf> = vec![];
         let mut message = String::new();
         let mut state = ParserState::User;
-        loop {
-            let Some(line) = lines.next_line().await? else { break };
-
+        while let Some(line) = lines.next_line().await? {
             if line.is_empty() {
                 continue;
             }
@@ -122,7 +98,10 @@ impl Complete {
     }
 }
 
-async fn add_message(model: &mut llm::Model, state: &ParserState, message: String, files: Vec<PathBuf>) -> Result<(), Exception> {
+async fn add_message<L>(model: &mut llm::Model<L>, state: &ParserState, message: String, files: Vec<PathBuf>) -> Result<(), Exception>
+where
+    L: ChatListener,
+{
     match state {
         ParserState::System => {
             info!("system message: {}", message);
