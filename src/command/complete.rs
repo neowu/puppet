@@ -95,7 +95,8 @@ impl Complete {
                 )));
             }
 
-            let pattern = self.pattern(line.strip_prefix("> file: ").unwrap());
+            let pattern = self.pattern(line.strip_prefix("> file: ").unwrap()).await?;
+            info!("include files, pattern: {pattern}");
             for entry in glob(&pattern)? {
                 let entry = entry?;
                 let extension = extension(&entry)?;
@@ -109,7 +110,6 @@ impl Complete {
                         message.push_str("```\n");
                     }
                     _ => {
-                        info!("file: {}", entry.to_string_lossy());
                         files.push(entry);
                     }
                 }
@@ -121,11 +121,15 @@ impl Complete {
         Ok(state)
     }
 
-    fn pattern(&self, pattern: &str) -> String {
+    async fn pattern(&self, pattern: &str) -> Result<String, Exception> {
         if !pattern.starts_with('/') {
-            return format!("{}/{}", self.prompt.parent().unwrap().to_string_lossy(), pattern);
+            return Ok(format!(
+                "{}/{}",
+                fs::canonicalize(&self.prompt).await?.parent().unwrap().to_string_lossy(),
+                pattern
+            ));
         }
-        pattern.to_string()
+        Ok(pattern.to_string())
     }
 }
 
@@ -146,8 +150,11 @@ async fn add_message(model: &mut llm::Model<ConsolePrinter>, state: ParserState,
         }
         ParserState::User => {
             info!("add user message: {}", message);
-            let data: Vec<&Path> = files.iter().map(|p| p.as_path()).collect();
-            model.add_user_message(message, &data).await?;
+            let files: Vec<&Path> = files.iter().map(|p| p.as_path()).collect();
+            for file in files.iter() {
+                info!("add user data: {}", file.to_string_lossy());
+            }
+            model.add_user_message(message, &files).await?;
         }
         ParserState::Assistant => {
             info!("add assistent message: {}", message);
