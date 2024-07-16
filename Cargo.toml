@@ -19,3 +19,4 @@ base64 = "0"
 uuid = { version = "1", features = ["v4"] }
 bytes = "1"
 regex = "1"
+glob = "0"
