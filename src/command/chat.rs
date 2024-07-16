@@ -14,16 +14,16 @@ use crate::util::exception::Exception;
 #[derive(Args)]
 pub struct Chat {
     #[arg(long, help = "conf path")]
-    conf: PathBuf,
+    conf: Option<PathBuf>,
 
-    #[arg(long, help = "model name")]
-    name: String,
+    #[arg(long, help = "model name", default_value = "gpt4o")]
+    model: String,
 }
 
 impl Chat {
     pub async fn execute(&self) -> Result<(), Exception> {
-        let config = llm::load(&self.conf).await?;
-        let mut model = config.create(&self.name, Some(ConsolePrinter))?;
+        let config = llm::load(self.conf.as_deref()).await?;
+        let mut model = config.create(&self.model, Some(ConsolePrinter))?;
 
         let reader = BufReader::new(stdin());
         let mut lines = reader.lines();

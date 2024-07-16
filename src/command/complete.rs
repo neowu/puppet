@@ -25,10 +25,10 @@ pub struct Complete {
     prompt: PathBuf,
 
     #[arg(long, help = "conf path")]
-    conf: PathBuf,
+    conf: Option<PathBuf>,
 
-    #[arg(long, help = "model name")]
-    name: String,
+    #[arg(long, help = "model name", default_value = "gpt4o")]
+    model: String,
 }
 
 enum ParserState {
@@ -39,8 +39,8 @@ enum ParserState {
 
 impl Complete {
     pub async fn execute(&self) -> Result<(), Exception> {
-        let config = llm::load(&self.conf).await?;
-        let mut model = config.create(&self.name, Some(ConsolePrinter))?;
+        let config = llm::load(self.conf.as_deref()).await?;
+        let mut model = config.create(&self.model, Some(ConsolePrinter))?;
 
         let prompt = fs::OpenOptions::new().read(true).open(&self.prompt).await?;
         let reader = BufReader::new(prompt);
@@ -59,7 +59,7 @@ impl Complete {
 
         let assistant_message = model.chat().await?;
         let mut prompt = fs::OpenOptions::new().append(true).open(&self.prompt).await?;
-        prompt.write_all(format!("\n# assistant ({})\n\n", self.name).as_bytes()).await?;
+        prompt.write_all(format!("\n# assistant ({})\n\n", self.model).as_bytes()).await?;
         prompt.write_all(assistant_message.as_bytes()).await?;
         prompt.write_all(b"\n").await?;
         Ok(())

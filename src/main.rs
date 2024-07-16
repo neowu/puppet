@@ -25,11 +25,11 @@ pub struct Cli {
 #[derive(Subcommand)]
 #[command(arg_required_else_help(true))]
 pub enum Command {
-    #[command(about = "chat")]
+    #[command(about = "interactive chat")]
     Chat(Chat),
     #[command(about = "speak")]
     Speech(Speak),
-    #[command(about = "complete")]
+    #[command(about = "complete prompt file")]
     Complete(Complete),
     #[command(about = "generate zsh completion")]
     GenerateZshCompletion(GenerateZshCompletion),
