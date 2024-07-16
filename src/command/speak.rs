@@ -16,10 +16,10 @@ use crate::util::exception::Exception;
 #[derive(Args)]
 pub struct Speak {
     #[arg(long, help = "conf path")]
-    conf: PathBuf,
+    conf: Option<PathBuf>,
 
-    #[arg(long, help = "model name")]
-    name: String,
+    #[arg(long, help = "model name", default_value = "jenny")]
+    model: String,
 
     #[arg(long, help = "text")]
     text: Option<String>,
@@ -34,7 +34,7 @@ impl Speak {
             return Err(Exception::ValidationError("must specify --stdin or --text".to_string()));
         }
 
-        let speech = tts::load(&self.conf, &self.name).await?;
+        let speech = tts::load(self.conf.as_deref(), &self.model).await?;
 
         let mut buffer = String::new();
         let text = if self.stdin {
