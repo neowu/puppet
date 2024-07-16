@@ -1,3 +1,4 @@
+use std::mem;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -50,12 +51,16 @@ impl Chat {
             }
             if line.starts_with("/file ") {
                 let file = PathBuf::from(line.strip_prefix("/file ").unwrap().to_string());
-                println!("added file, path={}", file.to_string_lossy());
-                files.push(file);
+                if !file.exists() {
+                    console::print(&format!("file not exists, path: {}\n", file.to_string_lossy())).await?;
+                } else {
+                    console::print(&format!("added file, path: {}\n", file.to_string_lossy())).await?;
+                    files.push(file);
+                }
             } else {
-                let data: Vec<&Path> = files.iter().map(|p| p.as_path()).collect();
-                model.add_user_message(line, &data).await?;
-                files.clear();
+                let files = &mem::take(&mut files);
+                let files: Vec<&Path> = files.iter().map(|p| p.as_path()).collect();
+                model.add_user_message(line, &files).await?;
 
                 model.chat().await?;
             }
