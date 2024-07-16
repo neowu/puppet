@@ -130,7 +130,7 @@ impl ChatRequestMessage {
 #[derive(Debug, Serialize)]
 pub struct Tool {
     pub r#type: String,
-    pub function: Function,
+    pub function: Rc<Function>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use serde::Serialize;
@@ -8,7 +9,7 @@ use tracing::info;
 use crate::util::exception::Exception;
 
 // both openai and gemini shares same openai schema
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize)]
 pub struct Function {
     pub name: String,
     pub description: String,
@@ -19,7 +20,7 @@ pub struct Function {
 pub type FunctionImplementation = dyn Fn(serde_json::Value) -> serde_json::Value + Send + Sync;
 
 pub struct FunctionStore {
-    pub declarations: Vec<Function>,
+    pub declarations: Vec<Rc<Function>>,
     pub implementations: HashMap<String, Arc<Box<FunctionImplementation>>>,
 }
 
@@ -33,7 +34,7 @@ impl FunctionStore {
 
     pub fn add(&mut self, function: Function, implementation: Box<FunctionImplementation>) {
         let name = function.name.to_string();
-        self.declarations.push(function);
+        self.declarations.push(Rc::new(function));
         self.implementations.insert(name, Arc::new(implementation));
     }
 

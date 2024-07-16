@@ -82,7 +82,7 @@ impl Content {
 #[derive(Debug, Serialize)]
 pub struct Tool {
     #[serde(rename = "functionDeclarations")]
-    pub function_declarations: Vec<Function>,
+    pub function_declarations: Vec<Rc<Function>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

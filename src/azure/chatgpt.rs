@@ -53,7 +53,7 @@ impl<L: ChatListener> ChatGPT<L> {
                 .iter()
                 .map(|f| Tool {
                     r#type: "function".to_string(),
-                    function: f.clone(),
+                    function: Rc::clone(f),
                 })
                 .collect(),
         );
