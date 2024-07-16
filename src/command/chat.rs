@@ -1,4 +1,4 @@
-use std::mem;
+use std::path::Path;
 use std::path::PathBuf;
 
 use clap::Args;
@@ -25,6 +25,18 @@ impl Chat {
         let config = llm::load(self.conf.as_deref()).await?;
         let mut model = config.create(&self.model, Some(ConsolePrinter))?;
 
+        let welcome_text = r#"
+---
+# Welcome to Puppet Chat
+---
+# Usage Instructions:
+
+- Type /quit to quit the application.
+
+- Type /file {file} to add a file.
+---
+"#;
+        console::print(welcome_text).await?;
         let reader = BufReader::new(stdin());
         let mut lines = reader.lines();
         let mut files: Vec<PathBuf> = vec![];
@@ -41,8 +53,10 @@ impl Chat {
                 println!("added file, path={}", file.to_string_lossy());
                 files.push(file);
             } else {
-                let files = mem::take(&mut files).into_iter().map(Some).collect();
-                model.add_user_message(line, files).await?;
+                let data: Vec<&Path> = files.iter().map(|p| p.as_path()).collect();
+                model.add_user_message(line, &data).await?;
+                files.clear();
+
                 model.chat().await?;
             }
         }

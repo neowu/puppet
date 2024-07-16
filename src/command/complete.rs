@@ -55,7 +55,7 @@ impl Complete {
             }
             state = self.process_line(state, line, &mut model, &mut message, &mut files).await?;
         }
-        add_message(&mut model, state, message, files.into_iter().map(Some).collect()).await?;
+        add_message(&mut model, state, message, files).await?;
 
         let assistant_message = model.chat().await?;
         let mut prompt = fs::OpenOptions::new().append(true).open(&self.prompt).await?;
@@ -83,11 +83,10 @@ impl Complete {
             }
             return Ok(ParserState::System);
         } else if line.starts_with("# user") {
-            let files = mem::take(files).into_iter().map(Some).collect();
-            add_message(model, state, mem::take(message), files).await?;
+            add_message(model, state, mem::take(message), mem::take(files)).await?;
             return Ok(ParserState::User);
         } else if line.starts_with("# assistant") {
-            add_message(model, state, mem::take(message), None).await?;
+            add_message(model, state, mem::take(message), vec![]).await?;
             return Ok(ParserState::Assistant);
         } else if line.starts_with("> file: ") {
             if !matches!(state, ParserState::User) {
@@ -139,12 +138,7 @@ fn extension(file: &Path) -> Result<&str, Exception> {
     Ok(extension)
 }
 
-async fn add_message(
-    model: &mut llm::Model<ConsolePrinter>,
-    state: ParserState,
-    message: String,
-    files: Option<Vec<PathBuf>>,
-) -> Result<(), Exception> {
+async fn add_message(model: &mut llm::Model<ConsolePrinter>, state: ParserState, message: String, files: Vec<PathBuf>) -> Result<(), Exception> {
     match state {
         ParserState::System => {
             info!("set system message: {}", message);
@@ -152,7 +146,8 @@ async fn add_message(
         }
         ParserState::User => {
             info!("add user message: {}", message);
-            model.add_user_message(message, files).await?;
+            let data: Vec<&Path> = files.iter().map(|p| p.as_path()).collect();
+            model.add_user_message(message, &data).await?;
         }
         ParserState::Assistant => {
             info!("add assistent message: {}", message);

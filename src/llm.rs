@@ -1,5 +1,4 @@
 use std::path::Path;
-use std::path::PathBuf;
 
 use tokio::fs;
 use tracing::info;
@@ -64,7 +63,7 @@ impl<L: ChatListener> Model<L> {
         }
     }
 
-    pub async fn add_user_message(&mut self, message: String, files: Option<Vec<PathBuf>>) -> Result<(), Exception> {
+    pub async fn add_user_message(&mut self, message: String, files: &[&Path]) -> Result<(), Exception> {
         match self {
             Model::ChatGPT(model) => model.add_user_message(message, files).await,
             Model::Gemini(model) => model.add_user_text(message, files).await,

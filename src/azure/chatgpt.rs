@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::ops::Not;
 use std::path::Path;
-use std::path::PathBuf;
 use std::rc::Rc;
 use std::str;
 
@@ -100,7 +99,7 @@ impl<L: ChatListener> ChatGPT<L> {
         messages.insert(0, ChatRequestMessage::new_message(Role::System, message))
     }
 
-    pub async fn add_user_message(&mut self, message: String, files: Option<Vec<PathBuf>>) -> Result<(), Exception> {
+    pub async fn add_user_message(&mut self, message: String, files: &[&Path]) -> Result<(), Exception> {
         let image_urls = image_urls(files).await?;
         self.add_message(ChatRequestMessage::new_user_message(message, image_urls));
         Ok(())
@@ -237,16 +236,11 @@ async fn read_sse(response: Response, tx: Sender<ChatResponse>) -> Result<(), Ex
     Ok(())
 }
 
-async fn image_urls(files: Option<Vec<PathBuf>>) -> Result<Option<Vec<String>>, Exception> {
-    let image_urls = if let Some(paths) = files {
-        let mut image_urls = Vec::with_capacity(paths.len());
-        for path in paths {
-            image_urls.push(base64_image_url(&path).await?)
-        }
-        Some(image_urls)
-    } else {
-        None
-    };
+async fn image_urls(files: &[&Path]) -> Result<Vec<String>, Exception> {
+    let mut image_urls = Vec::with_capacity(files.len());
+    for file in files {
+        image_urls.push(base64_image_url(file).await?)
+    }
     Ok(image_urls)
 }
 

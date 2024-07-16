@@ -23,20 +23,15 @@ pub struct Content {
 }
 
 impl Content {
-    pub fn new_user_text(text: String, data: Option<Vec<InlineData>>) -> Self {
+    pub fn new_user_text(text: String, datas: Vec<InlineData>) -> Self {
         let mut parts: Vec<Part> = vec![];
-        if let Some(data) = data {
-            parts.append(
-                &mut data
-                    .into_iter()
-                    .map(|d| Part {
-                        text: None,
-                        inline_data: Some(d),
-                        function_call: None,
-                        function_response: None,
-                    })
-                    .collect(),
-            );
+        for data in datas {
+            parts.push(Part {
+                text: None,
+                inline_data: Some(data),
+                function_call: None,
+                function_response: None,
+            });
         }
         parts.push(Part {
             text: Some(text),

@@ -69,21 +69,19 @@ impl ChatRequestMessage {
         }
     }
 
-    pub fn new_user_message(message: String, image_urls: Option<Vec<String>>) -> Self {
+    pub fn new_user_message(message: String, image_urls: Vec<String>) -> Self {
         let mut content = vec![];
         content.push(Content {
             r#type: "text".to_string(),
             text: Some(message),
             image_url: None,
         });
-        if let Some(image_urls) = image_urls {
-            for url in image_urls {
-                content.push(Content {
-                    r#type: "image_url".to_string(),
-                    text: None,
-                    image_url: Some(ImageUrl { url }),
-                });
-            }
+        for url in image_urls {
+            content.push(Content {
+                r#type: "image_url".to_string(),
+                text: None,
+                image_url: Some(ImageUrl { url }),
+            });
         }
         ChatRequestMessage {
             role: Role::User,

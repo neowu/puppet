@@ -1,7 +1,6 @@
 use std::mem;
 use std::ops::Not;
 use std::path::Path;
-use std::path::PathBuf;
 use std::rc::Rc;
 use std::str;
 
@@ -79,9 +78,9 @@ impl<L: ChatListener> Gemini<L> {
         self.system_instruction = Some(Rc::new(Content::new_model_text(text)));
     }
 
-    pub async fn add_user_text(&mut self, text: String, files: Option<Vec<PathBuf>>) -> Result<(), Exception> {
+    pub async fn add_user_text(&mut self, text: String, files: &[&Path]) -> Result<(), Exception> {
         let data = inline_datas(files).await?;
-        if data.is_some() {
+        if !data.is_empty() {
             self.tools = None; // function call is not supported with inline data
         }
         self.add_message(Content::new_user_text(text, data));
@@ -220,16 +219,11 @@ fn is_valid_json(content: &str) -> bool {
     result.is_ok()
 }
 
-async fn inline_datas(files: Option<Vec<PathBuf>>) -> Result<Option<Vec<InlineData>>, Exception> {
-    let data = if let Some(paths) = files {
-        let mut data = Vec::with_capacity(paths.len());
-        for path in paths {
-            data.push(inline_data(&path).await?);
-        }
-        Some(data)
-    } else {
-        None
-    };
+async fn inline_datas(files: &[&Path]) -> Result<Vec<InlineData>, Exception> {
+    let mut data = Vec::with_capacity(files.len());
+    for file in files {
+        data.push(inline_data(file).await?);
+    }
     Ok(data)
 }
 
