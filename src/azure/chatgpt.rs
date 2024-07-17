@@ -39,7 +39,6 @@ where
     function_store: FunctionStore,
     listener: Option<L>,
     pub option: Option<ChatOption>,
-    last_assistant_message: String,
 }
 
 type FunctionCall = HashMap<i64, (String, String, String)>;
@@ -64,7 +63,6 @@ impl<L: ChatListener> ChatGPT<L> {
             tools,
             function_store,
             listener,
-            last_assistant_message: String::new(),
             option: None,
         }
     }
@@ -86,7 +84,18 @@ impl<L: ChatListener> ChatGPT<L> {
             }
             self.process().await?;
         }
-        Ok(&self.last_assistant_message)
+        Ok(self
+            .messages
+            .last()
+            .unwrap()
+            .content
+            .as_ref()
+            .unwrap()
+            .first()
+            .unwrap()
+            .text
+            .as_ref()
+            .unwrap())
     }
 
     pub fn system_message(&mut self, message: String) {
@@ -157,8 +166,7 @@ impl<L: ChatListener> ChatGPT<L> {
         }
 
         if !assistant_message.is_empty() {
-            self.add_message(ChatRequestMessage::new_message(Role::Assistant, assistant_message.to_string()));
-            self.last_assistant_message = assistant_message;
+            self.add_message(ChatRequestMessage::new_message(Role::Assistant, assistant_message));
         }
 
         if !function_calls.is_empty() {

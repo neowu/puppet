@@ -42,7 +42,6 @@ where
     function_store: FunctionStore,
     listener: Option<L>,
     pub option: Option<ChatOption>,
-    last_model_message: String,
     usage: Usage,
 }
 
@@ -59,7 +58,6 @@ impl<L: ChatListener> Gemini<L> {
             function_store,
             listener,
             option: None,
-            last_model_message: String::new(),
             usage: Usage::default(),
         }
     }
@@ -72,7 +70,7 @@ impl<L: ChatListener> Gemini<L> {
                 .await?;
             self.add_message(Content::new_function_response(function_call.name, function_response));
         }
-        Ok(&self.last_model_message)
+        Ok(self.messages.last().unwrap().parts.first().unwrap().text.as_ref().unwrap())
     }
 
     pub fn system_instruction(&mut self, text: String) {
@@ -147,7 +145,6 @@ impl<L: ChatListener> Gemini<L> {
         }
 
         if !model_message.is_empty() {
-            self.last_model_message = model_message.to_string();
             self.add_message(Content::new_model_text(model_message));
         }
 
