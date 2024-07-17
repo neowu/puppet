@@ -59,19 +59,20 @@ impl<L: ChatListener> Gemini<L> {
             function_store,
             listener,
             option: None,
-            last_model_message: String::with_capacity(1024),
+            last_model_message: String::new(),
             usage: Usage::default(),
         }
     }
 
-    pub async fn chat(&mut self) -> Result<String, Exception> {
-        let mut result = self.process().await?;
-        while let Some(function_call) = result {
-            let function_response = self.function_store.call_function(function_call.name.clone(), function_call.args).await?;
+    pub async fn chat(&mut self) -> Result<&str, Exception> {
+        while let Some(function_call) = self.process().await? {
+            let function_response = self
+                .function_store
+                .call_function(function_call.name.to_string(), function_call.args)
+                .await?;
             self.add_message(Content::new_function_response(function_call.name, function_response));
-            result = self.process().await?;
         }
-        Ok(self.last_model_message.to_string())
+        Ok(&self.last_model_message)
     }
 
     pub fn system_instruction(&mut self, text: String) {
@@ -138,7 +139,10 @@ impl<L: ChatListener> Gemini<L> {
         }
 
         if let Some(call) = function_call {
-            self.add_message(Content::new_function_call(call.clone()));
+            self.add_message(Content::new_function_call(FunctionCall {
+                name: call.name.to_string(),
+                args: call.args.clone(),
+            }));
             return Ok(Some(call));
         }
 

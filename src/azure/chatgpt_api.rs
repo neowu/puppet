@@ -38,7 +38,7 @@ pub struct ChatRequestMessage {
 
 #[derive(Debug, Serialize)]
 pub struct Content {
-    pub r#type: String,
+    pub r#type: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -60,7 +60,7 @@ impl ChatRequestMessage {
         ChatRequestMessage {
             role,
             content: Some(vec![Content {
-                r#type: "text".to_string(),
+                r#type: "text",
                 text: Some(message),
                 image_url: None,
             }]),
@@ -72,13 +72,13 @@ impl ChatRequestMessage {
     pub fn new_user_message(message: String, image_urls: Vec<String>) -> Self {
         let mut content = vec![];
         content.push(Content {
-            r#type: "text".to_string(),
+            r#type: "text",
             text: Some(message),
             image_url: None,
         });
         for url in image_urls {
             content.push(Content {
-                r#type: "image_url".to_string(),
+                r#type: "image_url",
                 text: None,
                 image_url: Some(ImageUrl { url }),
             });
@@ -95,7 +95,7 @@ impl ChatRequestMessage {
         ChatRequestMessage {
             role: Role::Tool,
             content: Some(vec![Content {
-                r#type: "text".to_string(),
+                r#type: "text",
                 text: Some(result),
                 image_url: None,
             }]),
@@ -104,21 +104,18 @@ impl ChatRequestMessage {
         }
     }
 
-    pub fn new_function_call(calls: &HashMap<i64, (String, String, String)>) -> ChatRequestMessage {
+    pub fn new_function_call(calls: HashMap<i64, (String, String, String)>) -> ChatRequestMessage {
         ChatRequestMessage {
             role: Role::Assistant,
             content: None,
             tool_call_id: None,
             tool_calls: Some(
                 calls
-                    .iter()
+                    .into_iter()
                     .map(|(key, (id, name, arguments))| ToolCall {
-                        index: *key,
-                        id: Some(id.to_string()),
-                        function: FunctionCall {
-                            name: Some(name.to_string()),
-                            arguments: arguments.to_string(),
-                        },
+                        index: key,
+                        id: Some(id),
+                        function: FunctionCall { name: Some(name), arguments },
                         r#type: Some("function".to_string()),
                     })
                     .collect(),

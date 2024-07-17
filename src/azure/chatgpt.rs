@@ -69,10 +69,10 @@ impl<L: ChatListener> ChatGPT<L> {
         }
     }
 
-    pub async fn chat(&mut self) -> Result<String, Exception> {
+    pub async fn chat(&mut self) -> Result<&str, Exception> {
         let result = self.process().await?;
         if let Some(calls) = result {
-            self.add_message(ChatRequestMessage::new_function_call(&calls));
+            self.add_message(ChatRequestMessage::new_function_call(calls.clone()));
 
             let mut functions = Vec::with_capacity(calls.len());
             for (_, (id, name, args)) in calls {
@@ -86,7 +86,7 @@ impl<L: ChatListener> ChatGPT<L> {
             }
             self.process().await?;
         }
-        Ok(self.last_assistant_message.to_string())
+        Ok(&self.last_assistant_message)
     }
 
     pub fn system_message(&mut self, message: String) {
@@ -157,8 +157,8 @@ impl<L: ChatListener> ChatGPT<L> {
         }
 
         if !assistant_message.is_empty() {
-            self.last_assistant_message = assistant_message.to_string();
-            self.add_message(ChatRequestMessage::new_message(Role::Assistant, assistant_message));
+            self.add_message(ChatRequestMessage::new_message(Role::Assistant, assistant_message.to_string()));
+            self.last_assistant_message = assistant_message;
         }
 
         if !function_calls.is_empty() {

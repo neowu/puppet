@@ -17,7 +17,7 @@ pub struct Function {
     pub parameters: Option<serde_json::Value>,
 }
 
-pub type FunctionImplementation = dyn Fn(serde_json::Value) -> serde_json::Value + Send + Sync;
+pub type FunctionImplementation = dyn Fn(&serde_json::Value) -> serde_json::Value + Send + Sync;
 
 pub struct FunctionStore {
     pub declarations: Vec<Rc<Function>>,
@@ -42,7 +42,7 @@ impl FunctionStore {
         let function = self.get(&name)?;
         let response = tokio::spawn(async move {
             info!("call function, name={name}, args={args}");
-            function(args)
+            function(&args)
         })
         .await?;
         Ok(response)
@@ -54,7 +54,7 @@ impl FunctionStore {
             let function = self.get(&name)?;
             handles.spawn(async move {
                 info!("call function, id={id}, name={name}, args={args}");
-                (id, function(args))
+                (id, function(&args))
             });
         }
         let mut results = vec![];

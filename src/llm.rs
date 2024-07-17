@@ -42,7 +42,7 @@ where
 }
 
 impl<L: ChatListener> Model<L> {
-    pub async fn chat(&mut self) -> Result<String, Exception> {
+    pub async fn chat(&mut self) -> Result<&str, Exception> {
         match self {
             Model::ChatGPT(model) => model.chat().await,
             Model::Gemini(model) => model.chat().await,

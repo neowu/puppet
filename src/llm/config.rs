@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use rand::Rng;
 use serde::Deserialize;
 use serde_json::json;
+use tracing::info;
 
 use super::ChatListener;
 use crate::azure::chatgpt::ChatGPT;
@@ -37,7 +38,7 @@ impl Config {
             .get(name)
             .ok_or_else(|| Exception::ValidationError(format!("can not find model, name={name}")))?;
 
-        let function_store = load_function_store(config);
+        let function_store = load_function_store(config)?;
 
         let mut model = match config.provider {
             Provider::Azure => Model::ChatGPT(ChatGPT::new(
@@ -65,72 +66,76 @@ impl Config {
     }
 }
 
-fn load_function_store(config: &ModelConfig) -> FunctionStore {
+fn load_function_store(config: &ModelConfig) -> Result<FunctionStore, Exception> {
     let mut function_store = FunctionStore::new();
     for function in &config.functions {
-        if let "get_random_number" = function.as_str() {
-            function_store.add(
-                Function {
-                    name: "get_random_number".to_string(),
-                    description: "generate random number".to_string(),
-                    parameters: Some(serde_json::json!({
-                        "type": "object",
-                        "properties": {
-                          "max": {
-                            "type": "number",
-                            "description": "max of value"
-                          },
-                        },
-                        "required": ["max"]
-                    })),
-                },
-                Box::new(|request| {
-                    let max = request.get("max").unwrap().as_i64().unwrap();
-                    let mut rng = rand::thread_rng();
-                    let result = rng.gen_range(0..max);
-                    json!({
-                        "success": true,
-                        "result": result
-                    })
-                }),
-            );
-        }
-        if let "close_door" = function.as_str() {
-            function_store.add(
-                Function {
-                    name: "close_door".to_string(),
-                    description: "close door of home".to_string(),
-                    parameters: None,
-                },
-                Box::new(|_request| {
-                    json!({
-                        "success": true
-                    })
-                }),
-            );
-        }
-        if let "close_window" = function.as_str() {
-            function_store.add(
-                Function {
-                    name: "close_window".to_string(),
-                    description: "close window of home with id".to_string(),
-                    parameters: Some(serde_json::json!({
-                        "type": "object",
-                        "properties": {
-                            "id": {
-                                "type": "string",
-                                "description": "id of window"
+        info!("load function, name={function}");
+        match function.as_str() {
+            "get_random_number" => {
+                function_store.add(
+                    Function {
+                        name: "get_random_number".to_string(),
+                        description: "generate random number".to_string(),
+                        parameters: Some(serde_json::json!({
+                            "type": "object",
+                            "properties": {
+                              "max": {
+                                "type": "number",
+                                "description": "max of value"
+                              },
+                            },
+                            "required": ["max"]
+                        })),
+                    },
+                    Box::new(|request| {
+                        let max = request.get("max").unwrap().as_i64().unwrap();
+                        let mut rng = rand::thread_rng();
+                        let result = rng.gen_range(0..max);
+                        json!({
+                            "success": true,
+                            "result": result
+                        })
+                    }),
+                );
+            }
+            "close_door" => {
+                function_store.add(
+                    Function {
+                        name: "close_door".to_string(),
+                        description: "close door of home".to_string(),
+                        parameters: None,
+                    },
+                    Box::new(|_request| {
+                        json!({
+                            "success": true
+                        })
+                    }),
+                );
+            }
+            "close_window" => {
+                function_store.add(
+                    Function {
+                        name: "close_window".to_string(),
+                        description: "close window of home with id".to_string(),
+                        parameters: Some(serde_json::json!({
+                            "type": "object",
+                            "properties": {
+                                "id": {
+                                    "type": "string",
+                                    "description": "id of window"
+                                }
                             }
-                        }
-                    })),
-                },
-                Box::new(|_request| {
-                    json!({
-                        "success": true
-                    })
-                }),
-            );
+                        })),
+                    },
+                    Box::new(|_request| {
+                        json!({
+                            "success": true
+                        })
+                    }),
+                );
+            }
+            _ => return Err(Exception::ValidationError(format!("unknown function, name={function}"))),
         }
     }
-    function_store
+    Ok(function_store)
 }

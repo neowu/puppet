@@ -137,7 +137,7 @@ pub struct Candidate {
     pub finish_reason: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct FunctionCall {
     pub name: String,
     pub args: serde_json::Value,
