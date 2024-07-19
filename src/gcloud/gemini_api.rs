@@ -4,7 +4,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use crate::llm::function::Function;
-use crate::llm::function::FunctionObject;
+use crate::llm::function::FunctionPayload;
 
 #[derive(Debug, Serialize)]
 pub struct StreamGenerateContent {
@@ -55,7 +55,7 @@ impl Content {
         }
     }
 
-    pub fn new_function_response(results: Vec<FunctionObject>) -> Self {
+    pub fn new_function_response(results: Vec<FunctionPayload>) -> Self {
         Self {
             role: Role::User,
             parts: results

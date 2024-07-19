@@ -5,10 +5,10 @@ use serde::Deserialize;
 use serde_json::json;
 use tracing::info;
 
+use super::function::FunctionImplementations;
 use crate::azure::chatgpt::ChatGPT;
 use crate::gcloud::gemini::Gemini;
 use crate::llm::function::Function;
-use crate::llm::function::FunctionStore;
 use crate::llm::Model;
 use crate::provider::Provider;
 use crate::util::exception::Exception;
@@ -37,21 +37,23 @@ impl Config {
 
         info!("create model, name={name}, provider={}", json::to_json_value(&config.provider)?);
 
-        let function_store = load_function_store(config)?;
+        let (function_declarations, function_implementations) = load_functions(config)?;
 
         let mut model = match config.provider {
             Provider::Azure => Model::ChatGPT(ChatGPT::new(
                 config.endpoint.to_string(),
                 config.params.get("model").unwrap().to_string(),
                 config.params.get("api_key").unwrap().to_string(),
-                function_store,
+                function_declarations,
+                function_implementations,
             )),
             Provider::GCloud => Model::Gemini(Gemini::new(
                 config.endpoint.to_string(),
                 config.params.get("project").unwrap().to_string(),
                 config.params.get("location").unwrap().to_string(),
                 config.params.get("model").unwrap().to_string(),
-                function_store,
+                function_declarations,
+                function_implementations,
             )),
         };
 
@@ -63,27 +65,30 @@ impl Config {
     }
 }
 
-fn load_function_store(config: &ModelConfig) -> Result<FunctionStore, Exception> {
-    let mut function_store = FunctionStore::new();
+fn load_functions(config: &ModelConfig) -> Result<(Vec<Function>, FunctionImplementations), Exception> {
+    let mut declarations: Vec<Function> = vec![];
+    let mut implementations = FunctionImplementations::new();
+
     for function in &config.functions {
         info!("load function, name={function}");
         match function.as_str() {
             "get_random_number" => {
-                function_store.add(
-                    Function {
-                        name: "get_random_number".to_string(),
-                        description: "generate random number".to_string(),
-                        parameters: Some(serde_json::json!({
-                            "type": "object",
-                            "properties": {
-                              "max": {
-                                "type": "number",
-                                "description": "max of value"
-                              },
-                            },
-                            "required": ["max"]
-                        })),
-                    },
+                declarations.push(Function {
+                    name: "get_random_number",
+                    description: "generate random number",
+                    parameters: Some(serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                          "max": {
+                            "type": "number",
+                            "description": "max of value"
+                          },
+                        },
+                        "required": ["max"]
+                    })),
+                });
+                implementations.add(
+                    "get_random_number",
                     Box::new(|request| {
                         let max = request.get("max").unwrap().as_i64().unwrap();
                         let mut rng = rand::thread_rng();
@@ -93,37 +98,16 @@ fn load_function_store(config: &ModelConfig) -> Result<FunctionStore, Exception>
                             "result": result
                         })
                     }),
-                );
+                )
             }
             "close_door" => {
-                function_store.add(
-                    Function {
-                        name: "close_door".to_string(),
-                        description: "close door of home".to_string(),
-                        parameters: None,
-                    },
-                    Box::new(|_request| {
-                        json!({
-                            "success": true
-                        })
-                    }),
-                );
-            }
-            "close_window" => {
-                function_store.add(
-                    Function {
-                        name: "close_window".to_string(),
-                        description: "close window of home with id".to_string(),
-                        parameters: Some(serde_json::json!({
-                            "type": "object",
-                            "properties": {
-                                "id": {
-                                    "type": "string",
-                                    "description": "id of window"
-                                }
-                            }
-                        })),
-                    },
+                declarations.push(Function {
+                    name: "close_door",
+                    description: "close door of home",
+                    parameters: None,
+                });
+                implementations.add(
+                    "close_door",
                     Box::new(|_request| {
                         json!({
                             "success": true
@@ -134,5 +118,5 @@ fn load_function_store(config: &ModelConfig) -> Result<FunctionStore, Exception>
             _ => return Err(Exception::ValidationError(format!("unknown function, name={function}"))),
         }
     }
-    Ok(function_store)
+    Ok((declarations, implementations))
 }

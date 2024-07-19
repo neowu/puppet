@@ -20,9 +20,9 @@ use crate::azure::chatgpt_api::ChatRequestMessage;
 use crate::azure::chatgpt_api::ChatStreamResponse;
 use crate::azure::chatgpt_api::Role;
 use crate::azure::chatgpt_api::Tool;
+use crate::llm::function::Function;
 use crate::llm::function::FunctionImplementations;
-use crate::llm::function::FunctionObject;
-use crate::llm::function::FunctionStore;
+use crate::llm::function::FunctionPayload;
 use crate::llm::ChatOption;
 use crate::util::console;
 use crate::util::exception::Exception;
@@ -34,20 +34,21 @@ pub struct ChatGPT {
     api_key: String,
     messages: Rc<Vec<ChatRequestMessage>>,
     tools: Option<Rc<[Tool]>>,
-    implementations: FunctionImplementations,
+    function_implementations: FunctionImplementations,
     pub option: Option<ChatOption>,
 }
 
 impl ChatGPT {
-    pub fn new(endpoint: String, model: String, api_key: String, function_store: FunctionStore) -> Self {
-        let FunctionStore {
-            declarations,
-            implementations,
-        } = function_store;
-
+    pub fn new(
+        endpoint: String,
+        model: String,
+        api_key: String,
+        function_declarations: Vec<Function>,
+        function_implementations: FunctionImplementations,
+    ) -> Self {
         let url = format!("{endpoint}/openai/deployments/{model}/chat/completions?api-version=2024-06-01");
-        let tools: Option<Rc<[Tool]>> = declarations.is_empty().not().then_some(
-            declarations
+        let tools: Option<Rc<[Tool]>> = function_declarations.is_empty().not().then_some(
+            function_declarations
                 .into_iter()
                 .map(|function| Tool {
                     r#type: "function",
@@ -60,7 +61,7 @@ impl ChatGPT {
             api_key,
             messages: Rc::new(vec![]),
             tools,
-            implementations,
+            function_implementations,
             option: None,
         }
     }
@@ -116,7 +117,7 @@ impl ChatGPT {
             if let Some(calls) = message.tool_calls {
                 let mut functions = Vec::with_capacity(calls.len());
                 for call in calls.iter() {
-                    functions.push(FunctionObject {
+                    functions.push(FunctionPayload {
                         id: call.id.to_string(),
                         name: call.function.name.to_string(),
                         value: json::from_json::<serde_json::Value>(&call.function.arguments)?,
@@ -124,7 +125,7 @@ impl ChatGPT {
                 }
                 self.add_message(ChatRequestMessage::new_function_call(calls));
 
-                let results = self.implementations.call_functions(functions).await?;
+                let results = self.function_implementations.call(functions).await?;
                 for result in results {
                     self.add_message(ChatRequestMessage::new_function_response(result.id, json::to_json(&result.value)?));
                 }
