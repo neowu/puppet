@@ -18,3 +18,15 @@ where
 {
     serde_json::to_string(object).map_err(|err| Exception::unexpected_with_context(err, &format!("object={object:?}")))
 }
+
+pub fn to_json_value<T>(enum_value: &T) -> Result<String, Exception>
+where
+    T: Serialize + fmt::Debug,
+{
+    let value = serde_json::to_string(enum_value).map_err(|err| Exception::unexpected_with_context(err, &format!("enum={enum_value:?}")))?;
+    Ok(value
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .map(|value| value.to_string())
+        .unwrap_or(value))
+}

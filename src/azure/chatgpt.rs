@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::ops::Not;
 use std::path::Path;
 use std::rc::Rc;
@@ -9,42 +8,36 @@ use base64::Engine;
 use bytes::Bytes;
 use reqwest::Response;
 use tokio::fs;
-use tokio::sync::mpsc::channel;
-use tokio::sync::mpsc::Receiver;
-use tokio::sync::mpsc::Sender;
 use tracing::info;
 
+use super::chatgpt_api::ChatCompletionChoice;
+use super::chatgpt_api::ChatResponse;
+use super::chatgpt_api::ChatResponseMessage;
+use super::chatgpt_api::ToolCall;
+use super::chatgpt_api::Usage;
 use crate::azure::chatgpt_api::ChatRequest;
 use crate::azure::chatgpt_api::ChatRequestMessage;
-use crate::azure::chatgpt_api::ChatResponse;
+use crate::azure::chatgpt_api::ChatStreamResponse;
 use crate::azure::chatgpt_api::Role;
 use crate::azure::chatgpt_api::Tool;
 use crate::llm::function::FunctionStore;
-use crate::llm::ChatEvent;
-use crate::llm::ChatListener;
 use crate::llm::ChatOption;
-use crate::llm::Usage;
+use crate::util::console;
 use crate::util::exception::Exception;
 use crate::util::http_client;
 use crate::util::json;
 
-pub struct ChatGPT<L>
-where
-    L: ChatListener,
-{
+pub struct ChatGPT {
     url: String,
     api_key: String,
     messages: Rc<Vec<ChatRequestMessage>>,
     tools: Option<Rc<[Tool]>>,
     function_store: FunctionStore,
-    listener: Option<L>,
     pub option: Option<ChatOption>,
 }
 
-type FunctionCall = HashMap<i64, (String, String, String)>;
-
-impl<L: ChatListener> ChatGPT<L> {
-    pub fn new(endpoint: String, model: String, api_key: String, function_store: FunctionStore, listener: Option<L>) -> Self {
+impl ChatGPT {
+    pub fn new(endpoint: String, model: String, api_key: String, function_store: FunctionStore) -> Self {
         let url = format!("{endpoint}/openai/deployments/{model}/chat/completions?api-version=2024-06-01");
         let tools: Option<Rc<[Tool]>> = function_store.declarations.is_empty().not().then_some(
             function_store
@@ -62,28 +55,13 @@ impl<L: ChatListener> ChatGPT<L> {
             messages: Rc::new(vec![]),
             tools,
             function_store,
-            listener,
             option: None,
         }
     }
 
     pub async fn chat(&mut self) -> Result<&str, Exception> {
-        let result = self.process().await?;
-        if let Some(calls) = result {
-            self.add_message(ChatRequestMessage::new_function_call(calls.clone()));
+        self.process().await?;
 
-            let mut functions = Vec::with_capacity(calls.len());
-            for (_, (id, name, args)) in calls {
-                functions.push((id, name, json::from_json::<serde_json::Value>(&args)?))
-            }
-
-            let results = self.function_store.call_functions(functions).await?;
-            for result in results {
-                let function_response = ChatRequestMessage::new_function_response(result.0, json::to_json(&result.1)?);
-                self.add_message(function_response);
-            }
-            self.process().await?;
-        }
         Ok(self
             .messages
             .last()
@@ -122,60 +100,36 @@ impl<L: ChatListener> ChatGPT<L> {
         Rc::get_mut(&mut self.messages).unwrap().push(message);
     }
 
-    async fn process(&mut self) -> Result<Option<FunctionCall>, Exception> {
-        let (tx, rx) = channel(64);
+    async fn process(&mut self) -> Result<(), Exception> {
+        loop {
+            let http_response = self.call_api().await?;
+            let response = read_sse_response(http_response).await?;
+            info!(
+                "usage, prompt_tokens={}, completion_tokens={}",
+                response.usage.prompt_tokens, response.usage.completion_tokens
+            );
 
-        let response = self.call_api().await?;
-        let handle = tokio::spawn(read_sse(response, tx));
-        let function_call = self.process_response(rx).await?;
-        handle.await??;
+            let message = response.choices.into_iter().next().unwrap().message;
 
-        Ok(function_call)
-    }
-
-    async fn process_response(&mut self, mut rx: Receiver<ChatResponse>) -> Result<Option<FunctionCall>, Exception> {
-        let mut function_calls: FunctionCall = HashMap::new();
-        let mut assistant_message = String::new();
-        let mut usage = Usage::default();
-
-        while let Some(response) = rx.recv().await {
-            if let Some(choice) = response.choices.into_iter().next() {
-                let delta = choice.delta.unwrap();
-
-                if let Some(tool_calls) = delta.tool_calls {
-                    let call = tool_calls.into_iter().next().unwrap();
-                    if let Some(name) = call.function.name {
-                        function_calls.insert(call.index, (call.id.unwrap(), name, String::new()));
-                    }
-                    function_calls.get_mut(&call.index).unwrap().2.push_str(&call.function.arguments)
-                } else if let Some(value) = delta.content {
-                    assistant_message.push_str(&value);
-
-                    if let Some(listener) = self.listener.as_ref() {
-                        listener.on_event(ChatEvent::Delta(value)).await?;
-                    }
+            if let Some(calls) = message.tool_calls {
+                let mut functions = Vec::with_capacity(calls.len());
+                for call in calls.iter() {
+                    functions.push((
+                        call.id.to_string(),
+                        call.function.name.to_string(),
+                        json::from_json::<serde_json::Value>(&call.function.arguments)?,
+                    ))
                 }
-            }
+                self.add_message(ChatRequestMessage::new_function_call(calls));
 
-            if let Some(value) = response.usage {
-                usage = Usage {
-                    request_tokens: value.prompt_tokens,
-                    response_tokens: value.completion_tokens,
-                };
+                let results = self.function_store.call_functions(functions).await?;
+                for (id, _, result) in results {
+                    self.add_message(ChatRequestMessage::new_function_response(id, json::to_json(&result)?));
+                }
+            } else {
+                self.add_message(ChatRequestMessage::new_message(Role::Assistant, message.content.unwrap()));
+                return Ok(());
             }
-        }
-
-        if !assistant_message.is_empty() {
-            self.add_message(ChatRequestMessage::new_message(Role::Assistant, assistant_message));
-        }
-
-        if !function_calls.is_empty() {
-            Ok(Some(function_calls))
-        } else {
-            if let Some(listener) = self.listener.as_ref() {
-                listener.on_event(ChatEvent::End(usage)).await?;
-            }
-            Ok(None)
         }
     }
 
@@ -218,10 +172,23 @@ impl<L: ChatListener> ChatGPT<L> {
     }
 }
 
-async fn read_sse(response: Response, tx: Sender<ChatResponse>) -> Result<(), Exception> {
+async fn read_sse_response(mut http_response: Response) -> Result<ChatResponse, Exception> {
+    let mut response = ChatResponse {
+        choices: vec![ChatCompletionChoice {
+            index: 0,
+            message: ChatResponseMessage {
+                content: None,
+                tool_calls: None,
+            },
+            finish_reason: String::new(),
+        }],
+        usage: Usage::default(),
+    };
+    // only support one choice, n=1
+    let choice = response.choices.first_mut().unwrap();
+
     let mut buffer = String::with_capacity(1024);
-    let mut response = response;
-    while let Some(chunk) = response.chunk().await? {
+    while let Some(chunk) = http_response.chunk().await? {
         buffer.push_str(str::from_utf8(&chunk)?);
 
         while let Some(index) = buffer.find("\n\n") {
@@ -229,11 +196,49 @@ async fn read_sse(response: Response, tx: Sender<ChatResponse>) -> Result<(), Ex
                 let data = &buffer[6..index];
 
                 if data == "[DONE]" {
-                    return Ok(());
+                    break;
                 }
 
-                let response: ChatResponse = json::from_json(data)?;
-                tx.send(response).await?;
+                let stream_response: ChatStreamResponse = json::from_json(data)?;
+
+                if let Some(stream_choice) = stream_response.choices.into_iter().next() {
+                    choice.index = stream_choice.index;
+
+                    if let Some(stream_calls) = stream_choice.delta.tool_calls {
+                        if choice.message.tool_calls.is_none() {
+                            choice.message.tool_calls = Some(vec![]);
+                        }
+
+                        // stream tool call only return single element
+                        let stream_call = stream_calls.into_iter().next().unwrap();
+                        if let Some(name) = stream_call.function.name {
+                            choice.message.tool_calls.as_mut().unwrap().push(ToolCall {
+                                id: stream_call.id.unwrap(),
+                                r#type: "function".to_string(),
+                                function: super::chatgpt_api::FunctionCall {
+                                    name,
+                                    arguments: String::new(),
+                                },
+                            });
+                        }
+                        let tool_call = choice.message.tool_calls.as_mut().unwrap().get_mut(stream_call.index as usize).unwrap();
+                        tool_call.function.arguments.push_str(&stream_call.function.arguments);
+                    } else if let Some(content) = stream_choice.delta.content {
+                        choice.append_content(&content);
+                        console::print(&content).await?;
+                    }
+
+                    if let Some(finish_reason) = stream_choice.finish_reason {
+                        choice.finish_reason = finish_reason;
+                        if choice.finish_reason == "stop" {
+                            console::print("\n").await?;
+                        }
+                    }
+                }
+
+                if let Some(usage) = stream_response.usage {
+                    response.usage = usage;
+                }
 
                 buffer.replace_range(0..index + 2, "");
             } else {
@@ -241,7 +246,7 @@ async fn read_sse(response: Response, tx: Sender<ChatResponse>) -> Result<(), Ex
             }
         }
     }
-    Ok(())
+    Ok(response)
 }
 
 async fn image_urls(files: &[&Path]) -> Result<Vec<String>, Exception> {

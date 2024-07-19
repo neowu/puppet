@@ -8,7 +8,6 @@ use tokio::io::AsyncBufReadExt;
 use tokio::io::BufReader;
 
 use crate::llm;
-use crate::llm::ConsolePrinter;
 use crate::util::console;
 use crate::util::exception::Exception;
 
@@ -24,7 +23,7 @@ pub struct Chat {
 impl Chat {
     pub async fn execute(&self) -> Result<(), Exception> {
         let config = llm::load(self.conf.as_deref()).await?;
-        let mut model = config.create(&self.model, Some(ConsolePrinter))?;
+        let mut model = config.create(&self.model)?;
 
         let welcome_text = r#"
 ---

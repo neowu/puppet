@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use serde::Deserialize;
@@ -104,22 +103,12 @@ impl ChatRequestMessage {
         }
     }
 
-    pub fn new_function_call(calls: HashMap<i64, (String, String, String)>) -> ChatRequestMessage {
+    pub fn new_function_call(calls: Vec<ToolCall>) -> ChatRequestMessage {
         ChatRequestMessage {
             role: Role::Assistant,
             content: None,
             tool_call_id: None,
-            tool_calls: Some(
-                calls
-                    .into_iter()
-                    .map(|(key, (id, name, arguments))| ToolCall {
-                        index: key,
-                        id: Some(id),
-                        function: FunctionCall { name: Some(name), arguments },
-                        r#type: Some("function".to_string()),
-                    })
-                    .collect(),
-            ),
+            tool_calls: Some(calls),
         }
     }
 }
@@ -142,24 +131,68 @@ pub enum Role {
     Tool,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ChatStreamResponse {
+    pub choices: Vec<ChatStreamCompletionChoice>,
+    pub usage: Option<Usage>, // not supported by azure openai api yet
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ChatStreamCompletionChoice {
+    pub index: i64,
+    pub delta: ChatStreamResponseMessage,
+    pub finish_reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ChatStreamResponseMessage {
+    pub content: Option<String>,
+    pub tool_calls: Option<Vec<StreamToolCall>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct StreamToolCall {
+    pub index: i64,
+    pub id: Option<String>,
+    pub function: StreamFunctionCall,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct StreamFunctionCall {
+    pub name: Option<String>,
+    pub arguments: String,
+}
+
 #[allow(dead_code)]
+#[derive(Debug, Default, Deserialize)]
+pub struct Usage {
+    pub prompt_tokens: i32,
+    pub completion_tokens: i32,
+    pub total_tokens: i32,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ChatResponse {
-    pub id: String,
-    pub object: String,
-    pub created: i64,
-    pub model: String,
     pub choices: Vec<ChatCompletionChoice>,
-    pub usage: Option<Usage>, // not supported by azure openai api yet
+    pub usage: Usage,
 }
 
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct ChatCompletionChoice {
     pub index: i64,
-    pub message: Option<ChatResponseMessage>,
-    pub delta: Option<ChatResponseMessage>,
-    pub finish_reason: Option<String>,
+    pub message: ChatResponseMessage,
+    pub finish_reason: String,
+}
+
+impl ChatCompletionChoice {
+    pub fn append_content(&mut self, delta: &str) {
+        if let Some(content) = self.message.content.as_mut() {
+            content.push_str(delta);
+        } else {
+            self.message.content = Some(delta.to_string());
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -170,22 +203,13 @@ pub struct ChatResponseMessage {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ToolCall {
-    pub index: i64,
-    pub id: Option<String>,
-    pub r#type: Option<String>,
+    pub id: String,
+    pub r#type: String,
     pub function: FunctionCall,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FunctionCall {
-    pub name: Option<String>,
+    pub name: String,
     pub arguments: String,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Deserialize)]
-pub struct Usage {
-    pub completion_tokens: i32,
-    pub prompt_tokens: i32,
-    pub total_tokens: i32,
 }

@@ -1,4 +1,3 @@
-use std::mem;
 use std::ops::Not;
 use std::path::Path;
 use std::rc::Rc;
@@ -9,68 +8,54 @@ use base64::Engine;
 use bytes::Bytes;
 use reqwest::Response;
 use tokio::fs;
-use tokio::sync::mpsc::channel;
-use tokio::sync::mpsc::Receiver;
-use tokio::sync::mpsc::Sender;
 use tracing::info;
 
 use super::gemini_api::Content;
-use super::gemini_api::FunctionCall;
+use super::gemini_api::GenerateContentResponse;
 use super::gemini_api::GenerationConfig;
 use super::gemini_api::InlineData;
 use super::gemini_api::StreamGenerateContent;
 use super::gemini_api::Tool;
 use super::token;
-use crate::gcloud::gemini_api::GenerateContentResponse;
+use crate::gcloud::gemini_api::Candidate;
+use crate::gcloud::gemini_api::GenerateContentStreamResponse;
+use crate::gcloud::gemini_api::Role;
+use crate::gcloud::gemini_api::UsageMetadata;
 use crate::llm::function::FunctionStore;
-use crate::llm::ChatEvent;
-use crate::llm::ChatListener;
 use crate::llm::ChatOption;
-use crate::llm::Usage;
+use crate::util::console;
 use crate::util::exception::Exception;
 use crate::util::http_client;
 use crate::util::json;
 
-pub struct Gemini<L>
-where
-    L: ChatListener,
-{
+pub struct Gemini {
     url: String,
-    messages: Rc<Vec<Content>>,
+    contents: Rc<Vec<Content>>,
     system_instruction: Option<Rc<Content>>,
     tools: Option<Rc<[Tool]>>,
     function_store: FunctionStore,
-    listener: Option<L>,
     pub option: Option<ChatOption>,
-    usage: Usage,
 }
 
-impl<L: ChatListener> Gemini<L> {
-    pub fn new(endpoint: String, project: String, location: String, model: String, function_store: FunctionStore, listener: Option<L>) -> Self {
+impl Gemini {
+    pub fn new(endpoint: String, project: String, location: String, model: String, function_store: FunctionStore) -> Self {
         let url = format!("{endpoint}/v1/projects/{project}/locations/{location}/publishers/google/models/{model}:streamGenerateContent");
         Gemini {
             url,
-            messages: Rc::new(vec![]),
+            contents: Rc::new(vec![]),
             system_instruction: None,
             tools: function_store.declarations.is_empty().not().then_some(Rc::from(vec![Tool {
                 function_declarations: function_store.declarations.to_vec(),
             }])),
             function_store,
-            listener,
             option: None,
-            usage: Usage::default(),
         }
     }
 
     pub async fn chat(&mut self) -> Result<&str, Exception> {
-        while let Some(function_call) = self.process().await? {
-            let function_response = self
-                .function_store
-                .call_function(function_call.name.to_string(), function_call.args)
-                .await?;
-            self.add_message(Content::new_function_response(function_call.name, function_response));
-        }
-        Ok(self.messages.last().unwrap().parts.first().unwrap().text.as_ref().unwrap())
+        self.process().await?;
+
+        Ok(self.contents.last().unwrap().parts.first().unwrap().text.as_ref().unwrap())
     }
 
     pub fn system_instruction(&mut self, text: String) {
@@ -82,87 +67,50 @@ impl<L: ChatListener> Gemini<L> {
         if !data.is_empty() {
             self.tools = None; // function call is not supported with inline data
         }
-        self.add_message(Content::new_user_text(text, data));
+        self.add_content(Content::new_user_text(text, data));
         Ok(())
     }
 
     pub fn add_model_text(&mut self, text: String) {
-        self.add_message(Content::new_model_text(text));
+        self.add_content(Content::new_model_text(text));
     }
 
-    async fn process(&mut self) -> Result<Option<FunctionCall>, Exception> {
-        let (tx, rx) = channel(64);
-
-        let response = self.call_api().await?;
-        let handle = tokio::spawn(read_response_stream(response, tx));
-        let function_call = self.process_response(rx).await?;
-        handle.await??;
-
-        Ok(function_call)
-    }
-
-    async fn process_response(&mut self, mut rx: Receiver<GenerateContentResponse>) -> Result<Option<FunctionCall>, Exception> {
-        let mut model_message = String::new();
-        let mut function_call = None;
-        while let Some(response) = rx.recv().await {
-            if let Some(usage) = response.usage_metadata {
-                self.usage.request_tokens += usage.prompt_token_count;
-                self.usage.response_tokens += usage.candidates_token_count;
-            }
-
+    async fn process(&mut self) -> Result<(), Exception> {
+        loop {
+            let http_response = self.call_api().await?;
+            let response = read_stream_response(http_response).await?;
+            info!(
+                "usage, prompt_tokens={}, candidates_tokens={}",
+                response.usage_metadata.prompt_token_count, response.usage_metadata.candidates_token_count
+            );
+            // gemini only supports single candidate
             let candidate = response.candidates.into_iter().next().unwrap();
-            if let Some(reason) = candidate.finish_reason.as_ref() {
-                if reason == "STOP" {
-                    continue;
+
+            let mut functions = vec![];
+            for (i, part) in candidate.content.parts.iter().enumerate() {
+                if let Some(ref call) = part.function_call {
+                    functions.push((i.to_string(), call.name.to_string(), call.args.clone()));
                 }
             }
-            if candidate.content.is_none() {
-                return Err(Exception::unexpected(format!(
-                    "response ended, finish_reason={}",
-                    candidate.finish_reason.unwrap_or("".to_string())
-                )));
-            }
-            if let Some(content) = candidate.content {
-                let part = content.parts.into_iter().next().unwrap();
 
-                if let Some(call) = part.function_call {
-                    function_call = Some(call);
-                } else if let Some(text) = part.text {
-                    model_message.push_str(&text);
-                    if let Some(listener) = self.listener.as_ref() {
-                        listener.on_event(ChatEvent::Delta(text)).await?;
-                    }
-                }
+            self.add_content(candidate.content);
+
+            if !functions.is_empty() {
+                let function_result = self.function_store.call_functions(functions).await?;
+                self.add_content(Content::new_function_response(function_result));
+            } else {
+                return Ok(());
             }
         }
-
-        if let Some(call) = function_call {
-            self.add_message(Content::new_function_call(FunctionCall {
-                name: call.name.to_string(),
-                args: call.args.clone(),
-            }));
-            return Ok(Some(call));
-        }
-
-        if !model_message.is_empty() {
-            self.add_message(Content::new_model_text(model_message));
-        }
-
-        let usage = mem::take(&mut self.usage);
-        if let Some(listener) = self.listener.as_ref() {
-            listener.on_event(ChatEvent::End(usage)).await?;
-        }
-
-        Ok(None)
     }
 
-    fn add_message(&mut self, content: Content) {
-        Rc::get_mut(&mut self.messages).unwrap().push(content);
+    fn add_content(&mut self, content: Content) {
+        Rc::get_mut(&mut self.contents).unwrap().push(content);
     }
 
     async fn call_api(&self) -> Result<Response, Exception> {
         let request = StreamGenerateContent {
-            contents: Rc::clone(&self.messages),
+            contents: Rc::clone(&self.contents),
             system_instruction: self.system_instruction.clone(),
             generation_config: GenerationConfig {
                 temperature: self.option.as_ref().map_or(1.0, |option| option.temperature),
@@ -197,10 +145,21 @@ impl<L: ChatListener> Gemini<L> {
     }
 }
 
-async fn read_response_stream(response: Response, tx: Sender<GenerateContentResponse>) -> Result<(), Exception> {
-    let mut response = response;
+async fn read_stream_response(mut http_response: Response) -> Result<GenerateContentResponse, Exception> {
+    let mut response = GenerateContentResponse {
+        candidates: vec![Candidate {
+            content: Content {
+                role: Role::Model,
+                parts: vec![],
+            },
+            finish_reason: String::new(),
+        }],
+        usage_metadata: UsageMetadata::default(),
+    };
+    let candidate = response.candidates.first_mut().unwrap();
+
     let mut buffer = String::with_capacity(1024);
-    while let Some(chunk) = response.chunk().await? {
+    while let Some(chunk) = http_response.chunk().await? {
         buffer.push_str(str::from_utf8(&chunk).unwrap());
 
         // first char is '[' or ','
@@ -208,11 +167,39 @@ async fn read_response_stream(response: Response, tx: Sender<GenerateContentResp
             continue;
         }
 
-        let content: GenerateContentResponse = json::from_json(&buffer[1..])?;
-        tx.send(content).await?;
+        let stream_response: GenerateContentStreamResponse = json::from_json(&buffer[1..])?;
+
+        if let Some(value) = stream_response.usage_metadata {
+            response.usage_metadata = value;
+        }
+
+        let stream_candidate = stream_response.candidates.into_iter().next().unwrap();
+        if let Some(reason) = stream_candidate.finish_reason {
+            candidate.finish_reason = reason;
+            if candidate.finish_reason == "STOP" {
+                break;
+            }
+        }
+        if let Some(content) = stream_candidate.content {
+            for part in content.parts {
+                if let Some(text) = part.text {
+                    candidate.append_text(&text);
+                    console::print(&text).await?;
+                } else {
+                    // except text, all other parts send as whole
+                    candidate.content.parts.push(part);
+                }
+            }
+        }
+
         buffer.clear();
     }
-    Ok(())
+
+    if candidate.content.parts.first().unwrap().text.is_some() {
+        console::print("\n").await?;
+    }
+
+    Ok(response)
 }
 
 fn is_valid_json(content: &str) -> bool {

@@ -19,6 +19,12 @@ pub struct Function {
 
 pub type FunctionImplementation = dyn Fn(&serde_json::Value) -> serde_json::Value + Send + Sync;
 
+// pub struct FunctionObject {
+//     pub id: String,
+//     pub name: String,
+//     pub value: serde_json::Value,
+// }
+
 pub struct FunctionStore {
     pub declarations: Vec<Rc<Function>>,
     pub implementations: HashMap<String, Arc<Box<FunctionImplementation>>>,
@@ -38,23 +44,16 @@ impl FunctionStore {
         self.implementations.insert(name, Arc::new(implementation));
     }
 
-    pub async fn call_function(&self, name: String, args: serde_json::Value) -> Result<serde_json::Value, Exception> {
-        let function = self.get(&name)?;
-        let response = tokio::spawn(async move {
-            info!("call function, name={name}, args={args}");
-            function(&args)
-        })
-        .await?;
-        Ok(response)
-    }
-
-    pub async fn call_functions(&self, functions: Vec<(String, String, serde_json::Value)>) -> Result<Vec<(String, serde_json::Value)>, Exception> {
+    pub async fn call_functions(
+        &self,
+        functions: Vec<(String, String, serde_json::Value)>,
+    ) -> Result<Vec<(String, String, serde_json::Value)>, Exception> {
         let mut handles = JoinSet::new();
         for (id, name, args) in functions {
             let function = self.get(&name)?;
             handles.spawn(async move {
                 info!("call function, id={id}, name={name}, args={args}");
-                (id, function(&args))
+                (id, name, function(&args))
             });
         }
         let mut results = vec![];

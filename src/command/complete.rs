@@ -16,7 +16,6 @@ use tracing::info;
 
 use crate::llm;
 use crate::llm::ChatOption;
-use crate::llm::ConsolePrinter;
 use crate::util::exception::Exception;
 
 #[derive(Args)]
@@ -40,7 +39,7 @@ enum ParserState {
 impl Complete {
     pub async fn execute(&self) -> Result<(), Exception> {
         let config = llm::load(self.conf.as_deref()).await?;
-        let mut model = config.create(&self.model, Some(ConsolePrinter))?;
+        let mut model = config.create(&self.model)?;
 
         let prompt = fs::OpenOptions::new().read(true).open(&self.prompt).await?;
         let reader = BufReader::new(prompt);
@@ -77,7 +76,7 @@ impl Complete {
         &self,
         state: &ParserState,
         line: &str,
-        model: &mut llm::Model<ConsolePrinter>,
+        model: &mut llm::Model,
         message: &mut String,
         files: &mut Vec<PathBuf>,
     ) -> Result<Option<ParserState>, Exception> {
@@ -150,7 +149,7 @@ fn extension(file: &Path) -> Result<&str, Exception> {
     Ok(extension)
 }
 
-async fn add_message(model: &mut llm::Model<ConsolePrinter>, state: &ParserState, message: String, files: Vec<PathBuf>) -> Result<(), Exception> {
+async fn add_message(model: &mut llm::Model, state: &ParserState, message: String, files: Vec<PathBuf>) -> Result<(), Exception> {
     match state {
         ParserState::System => {
             info!("set system message: {}", message);

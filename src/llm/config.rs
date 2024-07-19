@@ -5,7 +5,6 @@ use serde::Deserialize;
 use serde_json::json;
 use tracing::info;
 
-use super::ChatListener;
 use crate::azure::chatgpt::ChatGPT;
 use crate::gcloud::gemini::Gemini;
 use crate::llm::function::Function;
@@ -13,6 +12,7 @@ use crate::llm::function::FunctionStore;
 use crate::llm::Model;
 use crate::provider::Provider;
 use crate::util::exception::Exception;
+use crate::util::json;
 
 #[derive(Deserialize, Debug)]
 pub struct Config {
@@ -29,14 +29,13 @@ pub struct ModelConfig {
 }
 
 impl Config {
-    pub fn create<L>(&self, name: &str, listener: Option<L>) -> Result<Model<L>, Exception>
-    where
-        L: ChatListener,
-    {
+    pub fn create(&self, name: &str) -> Result<Model, Exception> {
         let config = self
             .models
             .get(name)
             .ok_or_else(|| Exception::ValidationError(format!("can not find model, name={name}")))?;
+
+        info!("create model, name={name}, provider={}", json::to_json_value(&config.provider)?);
 
         let function_store = load_function_store(config)?;
 
@@ -46,7 +45,6 @@ impl Config {
                 config.params.get("model").unwrap().to_string(),
                 config.params.get("api_key").unwrap().to_string(),
                 function_store,
-                listener,
             )),
             Provider::GCloud => Model::Gemini(Gemini::new(
                 config.endpoint.to_string(),
@@ -54,7 +52,6 @@ impl Config {
                 config.params.get("location").unwrap().to_string(),
                 config.params.get("model").unwrap().to_string(),
                 function_store,
-                listener,
             )),
         };
 

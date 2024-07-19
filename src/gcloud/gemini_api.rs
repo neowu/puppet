@@ -54,27 +54,18 @@ impl Content {
         }
     }
 
-    pub fn new_function_response(name: String, response: serde_json::Value) -> Self {
+    pub fn new_function_response(results: Vec<(String, String, serde_json::Value)>) -> Self {
         Self {
             role: Role::User,
-            parts: vec![Part {
-                text: None,
-                inline_data: None,
-                function_call: None,
-                function_response: Some(FunctionResponse { name, response }),
-            }],
-        }
-    }
-
-    pub fn new_function_call(function_call: FunctionCall) -> Self {
-        Self {
-            role: Role::Model,
-            parts: vec![Part {
-                text: None,
-                inline_data: None,
-                function_call: Some(function_call),
-                function_response: None,
-            }],
+            parts: results
+                .into_iter()
+                .map(|r| Part {
+                    text: None,
+                    inline_data: None,
+                    function_call: None,
+                    function_response: Some(FunctionResponse { name: r.1, response: r.2 }),
+                })
+                .collect(),
         }
     }
 }
@@ -124,14 +115,14 @@ pub struct InlineData {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct GenerateContentResponse {
-    pub candidates: Vec<Candidate>,
+pub struct GenerateContentStreamResponse {
+    pub candidates: Vec<StreamCandidate>,
     #[serde(rename = "usageMetadata")]
     pub usage_metadata: Option<UsageMetadata>,
 }
 
 #[derive(Debug, Deserialize)]
-pub struct Candidate {
+pub struct StreamCandidate {
     pub content: Option<Content>,
     #[serde(rename = "finishReason")]
     pub finish_reason: Option<String>,
@@ -149,10 +140,39 @@ pub struct FunctionResponse {
     pub response: serde_json::Value,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 pub struct UsageMetadata {
     #[serde(rename = "promptTokenCount")]
     pub prompt_token_count: i32,
     #[serde(rename = "candidatesTokenCount")]
     pub candidates_token_count: i32,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GenerateContentResponse {
+    pub candidates: Vec<Candidate>,
+    #[serde(rename = "usageMetadata")]
+    pub usage_metadata: UsageMetadata,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Candidate {
+    pub content: Content,
+    #[serde(rename = "finishReason")]
+    pub finish_reason: String,
+}
+
+impl Candidate {
+    pub fn append_text(&mut self, delta: &str) {
+        if let Some(part) = self.content.parts.first_mut() {
+            part.text.as_mut().unwrap().push_str(delta);
+        } else {
+            self.content.parts.push(Part {
+                text: Some(delta.to_string()),
+                inline_data: None,
+                function_call: None,
+                function_response: None,
+            })
+        }
+    }
 }
