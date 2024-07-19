@@ -115,8 +115,8 @@ impl ChatRequestMessage {
 
 #[derive(Debug, Serialize)]
 pub struct Tool {
-    pub r#type: String,
-    pub function: Rc<Function>,
+    pub r#type: &'static str,
+    pub function: Function,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

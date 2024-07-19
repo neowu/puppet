@@ -21,6 +21,8 @@ use crate::gcloud::gemini_api::Candidate;
 use crate::gcloud::gemini_api::GenerateContentStreamResponse;
 use crate::gcloud::gemini_api::Role;
 use crate::gcloud::gemini_api::UsageMetadata;
+use crate::llm::function::FunctionImplementations;
+use crate::llm::function::FunctionObject;
 use crate::llm::function::FunctionStore;
 use crate::llm::ChatOption;
 use crate::util::console;
@@ -33,21 +35,26 @@ pub struct Gemini {
     contents: Rc<Vec<Content>>,
     system_instruction: Option<Rc<Content>>,
     tools: Option<Rc<[Tool]>>,
-    function_store: FunctionStore,
+    implementations: FunctionImplementations,
     pub option: Option<ChatOption>,
 }
 
 impl Gemini {
     pub fn new(endpoint: String, project: String, location: String, model: String, function_store: FunctionStore) -> Self {
+        let FunctionStore {
+            declarations,
+            implementations,
+        } = function_store;
+
         let url = format!("{endpoint}/v1/projects/{project}/locations/{location}/publishers/google/models/{model}:streamGenerateContent");
         Gemini {
             url,
             contents: Rc::new(vec![]),
             system_instruction: None,
-            tools: function_store.declarations.is_empty().not().then_some(Rc::from(vec![Tool {
-                function_declarations: function_store.declarations.to_vec(),
+            tools: declarations.is_empty().not().then_some(Rc::from(vec![Tool {
+                function_declarations: declarations,
             }])),
-            function_store,
+            implementations,
             option: None,
         }
     }
@@ -89,14 +96,18 @@ impl Gemini {
             let mut functions = vec![];
             for (i, part) in candidate.content.parts.iter().enumerate() {
                 if let Some(ref call) = part.function_call {
-                    functions.push((i.to_string(), call.name.to_string(), call.args.clone()));
+                    functions.push(FunctionObject {
+                        id: i.to_string(),
+                        name: call.name.to_string(),
+                        value: call.args.clone(),
+                    });
                 }
             }
 
             self.add_content(candidate.content);
 
             if !functions.is_empty() {
-                let function_result = self.function_store.call_functions(functions).await?;
+                let function_result = self.implementations.call_functions(functions).await?;
                 self.add_content(Content::new_function_response(function_result));
             } else {
                 return Ok(());

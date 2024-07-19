@@ -4,6 +4,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use crate::llm::function::Function;
+use crate::llm::function::FunctionObject;
 
 #[derive(Debug, Serialize)]
 pub struct StreamGenerateContent {
@@ -54,16 +55,19 @@ impl Content {
         }
     }
 
-    pub fn new_function_response(results: Vec<(String, String, serde_json::Value)>) -> Self {
+    pub fn new_function_response(results: Vec<FunctionObject>) -> Self {
         Self {
             role: Role::User,
             parts: results
                 .into_iter()
-                .map(|r| Part {
+                .map(|result| Part {
                     text: None,
                     inline_data: None,
                     function_call: None,
-                    function_response: Some(FunctionResponse { name: r.1, response: r.2 }),
+                    function_response: Some(FunctionResponse {
+                        name: result.name,
+                        response: result.value,
+                    }),
                 })
                 .collect(),
         }
@@ -73,7 +77,7 @@ impl Content {
 #[derive(Debug, Serialize)]
 pub struct Tool {
     #[serde(rename = "functionDeclarations")]
-    pub function_declarations: Vec<Rc<Function>>,
+    pub function_declarations: Vec<Function>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -20,6 +20,8 @@ use crate::azure::chatgpt_api::ChatRequestMessage;
 use crate::azure::chatgpt_api::ChatStreamResponse;
 use crate::azure::chatgpt_api::Role;
 use crate::azure::chatgpt_api::Tool;
+use crate::llm::function::FunctionImplementations;
+use crate::llm::function::FunctionObject;
 use crate::llm::function::FunctionStore;
 use crate::llm::ChatOption;
 use crate::util::console;
@@ -32,20 +34,24 @@ pub struct ChatGPT {
     api_key: String,
     messages: Rc<Vec<ChatRequestMessage>>,
     tools: Option<Rc<[Tool]>>,
-    function_store: FunctionStore,
+    implementations: FunctionImplementations,
     pub option: Option<ChatOption>,
 }
 
 impl ChatGPT {
     pub fn new(endpoint: String, model: String, api_key: String, function_store: FunctionStore) -> Self {
+        let FunctionStore {
+            declarations,
+            implementations,
+        } = function_store;
+
         let url = format!("{endpoint}/openai/deployments/{model}/chat/completions?api-version=2024-06-01");
-        let tools: Option<Rc<[Tool]>> = function_store.declarations.is_empty().not().then_some(
-            function_store
-                .declarations
-                .iter()
-                .map(|f| Tool {
-                    r#type: "function".to_string(),
-                    function: Rc::clone(f),
+        let tools: Option<Rc<[Tool]>> = declarations.is_empty().not().then_some(
+            declarations
+                .into_iter()
+                .map(|function| Tool {
+                    r#type: "function",
+                    function,
                 })
                 .collect(),
         );
@@ -54,7 +60,7 @@ impl ChatGPT {
             api_key,
             messages: Rc::new(vec![]),
             tools,
-            function_store,
+            implementations,
             option: None,
         }
     }
@@ -96,10 +102,6 @@ impl ChatGPT {
         self.add_message(ChatRequestMessage::new_message(Role::Assistant, message));
     }
 
-    fn add_message(&mut self, message: ChatRequestMessage) {
-        Rc::get_mut(&mut self.messages).unwrap().push(message);
-    }
-
     async fn process(&mut self) -> Result<(), Exception> {
         loop {
             let http_response = self.call_api().await?;
@@ -114,17 +116,17 @@ impl ChatGPT {
             if let Some(calls) = message.tool_calls {
                 let mut functions = Vec::with_capacity(calls.len());
                 for call in calls.iter() {
-                    functions.push((
-                        call.id.to_string(),
-                        call.function.name.to_string(),
-                        json::from_json::<serde_json::Value>(&call.function.arguments)?,
-                    ))
+                    functions.push(FunctionObject {
+                        id: call.id.to_string(),
+                        name: call.function.name.to_string(),
+                        value: json::from_json::<serde_json::Value>(&call.function.arguments)?,
+                    })
                 }
                 self.add_message(ChatRequestMessage::new_function_call(calls));
 
-                let results = self.function_store.call_functions(functions).await?;
-                for (id, _, result) in results {
-                    self.add_message(ChatRequestMessage::new_function_response(id, json::to_json(&result)?));
+                let results = self.implementations.call_functions(functions).await?;
+                for result in results {
+                    self.add_message(ChatRequestMessage::new_function_response(result.id, json::to_json(&result.value)?));
                 }
             } else {
                 self.add_message(ChatRequestMessage::new_message(Role::Assistant, message.content.unwrap()));
@@ -169,6 +171,10 @@ impl ChatGPT {
         }
 
         Ok(response)
+    }
+
+    fn add_message(&mut self, message: ChatRequestMessage) {
+        Rc::get_mut(&mut self.messages).unwrap().push(message);
     }
 }
 

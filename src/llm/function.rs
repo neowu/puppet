@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::rc::Rc;
 use std::sync::Arc;
 
 use serde::Serialize;
@@ -19,41 +18,53 @@ pub struct Function {
 
 pub type FunctionImplementation = dyn Fn(&serde_json::Value) -> serde_json::Value + Send + Sync;
 
-// pub struct FunctionObject {
-//     pub id: String,
-//     pub name: String,
-//     pub value: serde_json::Value,
-// }
+pub struct FunctionObject {
+    pub id: String,
+    pub name: String,
+    pub value: serde_json::Value,
+}
 
 pub struct FunctionStore {
-    pub declarations: Vec<Rc<Function>>,
-    pub implementations: HashMap<String, Arc<Box<FunctionImplementation>>>,
+    pub declarations: Vec<Function>,
+    pub implementations: FunctionImplementations,
+}
+
+pub struct FunctionImplementations {
+    implementations: HashMap<String, Arc<Box<FunctionImplementation>>>,
 }
 
 impl FunctionStore {
     pub fn new() -> Self {
         FunctionStore {
             declarations: vec![],
-            implementations: HashMap::new(),
+            implementations: FunctionImplementations {
+                implementations: HashMap::new(),
+            },
         }
     }
 
     pub fn add(&mut self, function: Function, implementation: Box<FunctionImplementation>) {
         let name = function.name.to_string();
-        self.declarations.push(Rc::new(function));
-        self.implementations.insert(name, Arc::new(implementation));
+        self.declarations.push(function);
+        self.implementations.implementations.insert(name, Arc::new(implementation));
     }
+}
 
-    pub async fn call_functions(
-        &self,
-        functions: Vec<(String, String, serde_json::Value)>,
-    ) -> Result<Vec<(String, String, serde_json::Value)>, Exception> {
+impl FunctionImplementations {
+    pub async fn call_functions(&self, functions: Vec<FunctionObject>) -> Result<Vec<FunctionObject>, Exception> {
         let mut handles = JoinSet::new();
-        for (id, name, args) in functions {
-            let function = self.get(&name)?;
+        for function_param in functions {
+            let function = self.get(&function_param.name)?;
             handles.spawn(async move {
-                info!("call function, id={id}, name={name}, args={args}");
-                (id, name, function(&args))
+                info!(
+                    "call function, id={}, name={}, args={}",
+                    function_param.id, function_param.name, function_param.value
+                );
+                FunctionObject {
+                    id: function_param.id,
+                    name: function_param.name,
+                    value: function(&function_param.value),
+                }
             });
         }
         let mut results = vec![];
