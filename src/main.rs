@@ -37,7 +37,6 @@ pub enum Command {
 
 #[tokio::main]
 async fn main() -> Result<(), Exception> {
-    tracing_subscriber::fmt().with_thread_ids(true).init();
     let cli = Cli::parse();
     match cli.command {
         Some(Command::Chat(command)) => command.execute().await,

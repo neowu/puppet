@@ -3,9 +3,9 @@ use std::borrow::Cow;
 use base64::prelude::BASE64_STANDARD;
 use base64::DecodeError;
 use base64::Engine;
+use log::info;
 use serde::Deserialize;
 use serde::Serialize;
-use tracing::info;
 
 use super::token;
 use crate::util::exception::Exception;

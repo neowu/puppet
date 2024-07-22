@@ -6,9 +6,9 @@ use std::str;
 use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
 use bytes::Bytes;
+use log::info;
 use reqwest::Response;
 use tokio::fs;
-use tracing::info;
 
 use super::chatgpt_api::ChatCompletionChoice;
 use super::chatgpt_api::ChatResponse;
@@ -129,8 +129,8 @@ impl ChatGPT {
                 for result in results {
                     self.add_message(ChatRequestMessage::new_function_response(result.id, json::to_json(&result.value)?));
                 }
-            } else {
-                self.add_message(ChatRequestMessage::new_message(Role::Assistant, message.content.unwrap()));
+            } else if let Some(content) = message.content {
+                self.add_message(ChatRequestMessage::new_message(Role::Assistant, content));
                 return Ok(());
             }
         }
@@ -163,8 +163,7 @@ impl ChatGPT {
         let response = request.send().await?;
         let status = response.status();
         if status != 200 {
-            let body = str::from_utf8(&body)?;
-            info!("body={}", body);
+            info!("body={}", str::from_utf8(&body)?);
             let response_text = response.text().await?;
             return Err(Exception::ExternalError(format!(
                 "failed to call azure api, status={status}, response={response_text}"

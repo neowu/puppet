@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
+use log::info;
 use rand::Rng;
 use serde::Deserialize;
 use serde_json::json;
-use tracing::info;
 
 use super::function::FunctionImplementations;
 use crate::azure::chatgpt::ChatGPT;

@@ -3,11 +3,11 @@ use std::path::PathBuf;
 
 use clap::arg;
 use clap::Args;
+use log::info;
 use tokio::fs;
 use tokio::io::stdin;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
-use tracing::info;
 use uuid::Uuid;
 
 use crate::tts;

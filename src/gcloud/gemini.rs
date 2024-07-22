@@ -6,9 +6,9 @@ use std::str;
 use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
 use bytes::Bytes;
+use log::info;
 use reqwest::Response;
 use tokio::fs;
-use tracing::info;
 
 use super::gemini_api::Content;
 use super::gemini_api::GenerateContentResponse;
@@ -147,8 +147,7 @@ impl Gemini {
 
         let status = response.status();
         if status != 200 {
-            let body = str::from_utf8(&body)?;
-            info!("body={}", body);
+            info!("body={}", str::from_utf8(&body)?);
             let response_text = response.text().await?;
             return Err(Exception::ExternalError(format!(
                 "failed to call gcloud api, status={status}, response={response_text}"

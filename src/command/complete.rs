@@ -7,12 +7,12 @@ use clap::Args;
 use glob::glob;
 use glob::GlobError;
 use glob::PatternError;
+use log::info;
 use regex::Regex;
 use tokio::fs;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::io::BufReader;
-use tracing::info;
 
 use crate::llm;
 use crate::llm::ChatOption;
