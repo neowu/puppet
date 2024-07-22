@@ -95,14 +95,14 @@ impl Complete {
         } else if line.starts_with("# assistant") {
             add_message(model, state, mem::take(message), vec![]).await?;
             return Ok(Some(ParserState::Assistant));
-        } else if line.starts_with("> file: ") {
+        } else if let Some(file) = line.strip_prefix("> file: ") {
             if !matches!(state, ParserState::User) {
                 return Err(Exception::ValidationError(format!(
                     "file can only be included in user message, line={line}"
                 )));
             }
 
-            let pattern = self.pattern(line.strip_prefix("> file: ").unwrap()).await?;
+            let pattern = self.pattern(file).await?;
             info!("include files, pattern: {pattern}");
             for entry in glob(&pattern)? {
                 let entry = entry?;
@@ -141,12 +141,10 @@ impl Complete {
 }
 
 fn extension(file: &Path) -> Result<&str, Exception> {
-    let extension = file
-        .extension()
+    file.extension()
         .ok_or_else(|| Exception::ValidationError(format!("file must have a valid extension, path={}", file.to_string_lossy())))?
         .to_str()
-        .unwrap();
-    Ok(extension)
+        .ok_or_else(|| Exception::ValidationError(format!("path is invalid, path={}", file.to_string_lossy())))
 }
 
 async fn add_message(model: &mut llm::Model, state: &ParserState, message: String, files: Vec<PathBuf>) -> Result<(), Exception> {

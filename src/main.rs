@@ -19,7 +19,7 @@ mod util;
 #[command(about = "puppet ai")]
 pub struct Cli {
     #[command(subcommand)]
-    command: Option<Command>,
+    command: Command,
 }
 
 #[derive(Subcommand)]
@@ -39,10 +39,9 @@ pub enum Command {
 async fn main() -> Result<(), Exception> {
     let cli = Cli::parse();
     match cli.command {
-        Some(Command::Chat(command)) => command.execute().await,
-        Some(Command::Speech(command)) => command.execute().await,
-        Some(Command::Complete(command)) => command.execute().await,
-        Some(Command::GenerateZshCompletion(command)) => command.execute(),
-        None => panic!("not implemented"),
+        Command::Chat(command) => command.execute().await,
+        Command::Speech(command) => command.execute().await,
+        Command::Complete(command) => command.execute().await,
+        Command::GenerateZshCompletion(command) => command.execute(),
     }
 }

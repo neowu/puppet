@@ -48,8 +48,8 @@ impl Chat {
             if line.starts_with("/quit") {
                 break;
             }
-            if line.starts_with("/file ") {
-                let file = PathBuf::from(line.strip_prefix("/file ").unwrap().to_string());
+            if let Some(file) = line.strip_prefix("/file ") {
+                let file = PathBuf::from(file);
                 if !file.exists() {
                     console::print(&format!("file not exists, path: {}\n", file.to_string_lossy())).await?;
                 } else {
@@ -57,7 +57,7 @@ impl Chat {
                     files.push(file);
                 }
             } else {
-                let files = &mem::take(&mut files);
+                let files = mem::take(&mut files);
                 let files: Vec<&Path> = files.iter().map(|p| p.as_path()).collect();
                 model.add_user_message(line, &files).await?;
 

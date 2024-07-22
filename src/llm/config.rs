@@ -28,6 +28,17 @@ pub struct ModelConfig {
     pub functions: Vec<String>,
 }
 
+impl ModelConfig {
+    fn param(&self, name: &str) -> Result<String, Exception> {
+        let value = self
+            .params
+            .get(name)
+            .ok_or_else(|| Exception::ValidationError(format!("config param {} is required", name)))?
+            .to_string();
+        Ok(value)
+    }
+}
+
 impl Config {
     pub fn create(&self, name: &str) -> Result<Model, Exception> {
         let config = self
@@ -42,16 +53,16 @@ impl Config {
         let mut model = match config.provider {
             Provider::Azure => Model::ChatGPT(ChatGPT::new(
                 config.endpoint.to_string(),
-                config.params.get("model").unwrap().to_string(),
-                config.params.get("api_key").unwrap().to_string(),
+                config.param("model")?,
+                config.param("api_key")?,
                 function_declarations,
                 function_implementations,
             )),
             Provider::GCloud => Model::Gemini(Gemini::new(
                 config.endpoint.to_string(),
-                config.params.get("project").unwrap().to_string(),
-                config.params.get("location").unwrap().to_string(),
-                config.params.get("model").unwrap().to_string(),
+                config.param("project")?,
+                config.param("location")?,
+                config.param("model")?,
                 function_declarations,
                 function_implementations,
             )),

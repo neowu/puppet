@@ -23,6 +23,17 @@ struct ModelConfig {
     params: HashMap<String, String>,
 }
 
+impl ModelConfig {
+    fn param(&self, name: &str) -> Result<String, Exception> {
+        let value = self
+            .params
+            .get(name)
+            .ok_or_else(|| Exception::ValidationError(format!("config param {} is required", name)))?
+            .to_string();
+        Ok(value)
+    }
+}
+
 pub enum Speech {
     Azure(AzureTTS),
     GCloud(GCloudTTS),
@@ -52,14 +63,14 @@ pub async fn load(path: Option<&Path>, name: &str) -> Result<Speech, Exception> 
     let model = match config.provider {
         Provider::Azure => Speech::Azure(AzureTTS {
             endpoint: config.endpoint.to_string(),
-            resource: config.params.get("resource").unwrap().to_string(),
-            api_key: config.params.get("api_key").unwrap().to_string(),
-            voice: config.params.get("voice").unwrap().to_string(),
+            resource: config.param("resource")?,
+            api_key: config.param("api_key")?,
+            voice: config.param("voice")?,
         }),
         Provider::GCloud => Speech::GCloud(GCloudTTS {
             endpoint: config.endpoint.to_string(),
-            project: config.params.get("project").unwrap().to_string(),
-            voice: config.params.get("voice").unwrap().to_string(),
+            project: config.param("project")?,
+            voice: config.param("voice")?,
         }),
     };
 

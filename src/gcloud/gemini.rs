@@ -232,8 +232,8 @@ async fn inline_data(path: &Path) -> Result<InlineData, Exception> {
     let extension = path
         .extension()
         .ok_or_else(|| Exception::ValidationError(format!("file must have extension, path={}", path.to_string_lossy())))?
-        .to_str()
-        .unwrap();
+        .to_string_lossy();
+    let extension = extension.as_ref();
     let content = fs::read(path).await?;
     let mime_type = match extension {
         "jpg" => Ok("image/jpeg".to_string()),
