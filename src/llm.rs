@@ -1,7 +1,7 @@
 use std::path::Path;
 
-use log::info;
 use tokio::fs;
+use tracing::info;
 
 use crate::azure::chatgpt::ChatGPT;
 use crate::gcloud::gemini::Gemini;

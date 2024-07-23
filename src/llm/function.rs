@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use log::info;
 use serde::Serialize;
 use tokio::task::JoinSet;
+use tracing::info;
 
 use crate::util::exception::Exception;
 

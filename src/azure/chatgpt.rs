@@ -1,3 +1,5 @@
+use std::io;
+use std::io::ErrorKind;
 use std::ops::Not;
 use std::path::Path;
 use std::rc::Rc;
@@ -6,9 +8,12 @@ use std::str;
 use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
 use bytes::Bytes;
-use log::info;
+use futures::AsyncBufReadExt;
+use futures::StreamExt;
+use futures::TryStreamExt;
 use reqwest::Response;
 use tokio::fs;
+use tracing::info;
 
 use super::chatgpt_api::ChatCompletionChoice;
 use super::chatgpt_api::ChatResponse;
@@ -129,8 +134,8 @@ impl ChatGPT {
                 for result in results {
                     self.add_message(ChatRequestMessage::new_function_response(result.id, json::to_json(&result.value)?));
                 }
-            } else if let Some(content) = message.content {
-                self.add_message(ChatRequestMessage::new_message(Role::Assistant, content));
+            } else {
+                self.add_message(ChatRequestMessage::new_message(Role::Assistant, message.content.unwrap()));
                 return Ok(());
             }
         }
@@ -163,7 +168,8 @@ impl ChatGPT {
         let response = request.send().await?;
         let status = response.status();
         if status != 200 {
-            info!("body={}", str::from_utf8(&body)?);
+            let body = str::from_utf8(&body)?;
+            info!("body={}", body);
             let response_text = response.text().await?;
             return Err(Exception::ExternalError(format!(
                 "failed to call azure api, status={status}, response={response_text}"
@@ -178,7 +184,7 @@ impl ChatGPT {
     }
 }
 
-async fn read_sse_response(mut http_response: Response) -> Result<ChatResponse, Exception> {
+async fn read_sse_response(http_response: Response) -> Result<ChatResponse, Exception> {
     let mut response = ChatResponse {
         choices: vec![ChatCompletionChoice {
             index: 0,
@@ -193,62 +199,59 @@ async fn read_sse_response(mut http_response: Response) -> Result<ChatResponse, 
     // only support one choice, n=1
     let choice = response.choices.first_mut().unwrap();
 
-    let mut buffer = String::with_capacity(1024);
-    while let Some(chunk) = http_response.chunk().await? {
-        buffer.push_str(str::from_utf8(&chunk)?);
+    let reader = http_response
+        .bytes_stream()
+        .map_err(|e| io::Error::new(ErrorKind::Other, e))
+        .into_async_read();
 
-        while let Some(index) = buffer.find("\n\n") {
-            if buffer.starts_with("data:") {
-                let data = &buffer[6..index];
+    let mut lines = reader.lines();
+    while let Some(line) = lines.next().await {
+        let line = line?;
 
-                if data == "[DONE]" {
-                    break;
-                }
+        if let Some(data) = line.strip_prefix("data: ") {
+            if data == "[DONE]" {
+                break;
+            }
 
-                let stream_response: ChatStreamResponse = json::from_json(data)?;
+            let stream_response: ChatStreamResponse = json::from_json(data)?;
 
-                if let Some(stream_choice) = stream_response.choices.into_iter().next() {
-                    choice.index = stream_choice.index;
+            if let Some(stream_choice) = stream_response.choices.into_iter().next() {
+                choice.index = stream_choice.index;
 
-                    if let Some(stream_calls) = stream_choice.delta.tool_calls {
-                        if choice.message.tool_calls.is_none() {
-                            choice.message.tool_calls = Some(vec![]);
-                        }
-
-                        // stream tool call only return single element
-                        let stream_call = stream_calls.into_iter().next().unwrap();
-                        if let Some(name) = stream_call.function.name {
-                            choice.message.tool_calls.as_mut().unwrap().push(ToolCall {
-                                id: stream_call.id.unwrap(),
-                                r#type: "function".to_string(),
-                                function: super::chatgpt_api::FunctionCall {
-                                    name,
-                                    arguments: String::new(),
-                                },
-                            });
-                        }
-                        let tool_call = choice.message.tool_calls.as_mut().unwrap().get_mut(stream_call.index as usize).unwrap();
-                        tool_call.function.arguments.push_str(&stream_call.function.arguments);
-                    } else if let Some(content) = stream_choice.delta.content {
-                        choice.append_content(&content);
-                        console::print(&content).await?;
+                if let Some(stream_calls) = stream_choice.delta.tool_calls {
+                    if choice.message.tool_calls.is_none() {
+                        choice.message.tool_calls = Some(vec![]);
                     }
 
-                    if let Some(finish_reason) = stream_choice.finish_reason {
-                        choice.finish_reason = finish_reason;
-                        if choice.finish_reason == "stop" {
-                            console::print("\n").await?;
-                        }
+                    // stream tool call only return single element
+                    let stream_call = stream_calls.into_iter().next().unwrap();
+                    if let Some(name) = stream_call.function.name {
+                        choice.message.tool_calls.as_mut().unwrap().push(ToolCall {
+                            id: stream_call.id.unwrap(),
+                            r#type: "function".to_string(),
+                            function: super::chatgpt_api::FunctionCall {
+                                name,
+                                arguments: String::new(),
+                            },
+                        });
+                    }
+                    let tool_call = choice.message.tool_calls.as_mut().unwrap().get_mut(stream_call.index as usize).unwrap();
+                    tool_call.function.arguments.push_str(&stream_call.function.arguments);
+                } else if let Some(content) = stream_choice.delta.content {
+                    choice.append_content(&content);
+                    console::print(&content).await?;
+                }
+
+                if let Some(finish_reason) = stream_choice.finish_reason {
+                    choice.finish_reason = finish_reason;
+                    if choice.finish_reason == "stop" {
+                        console::print("\n").await?;
                     }
                 }
+            }
 
-                if let Some(usage) = stream_response.usage {
-                    response.usage = usage;
-                }
-
-                buffer.replace_range(0..index + 2, "");
-            } else {
-                return Err(Exception::unexpected(format!("unexpected sse message, buffer={}", buffer)));
+            if let Some(usage) = stream_response.usage {
+                response.usage = usage;
             }
         }
     }

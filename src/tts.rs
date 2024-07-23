@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use log::info;
 use serde::Deserialize;
 use tokio::fs;
+use tracing::info;
 
 use crate::azure::tts::AzureTTS;
 use crate::gcloud::tts::GCloudTTS;
