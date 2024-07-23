@@ -176,6 +176,7 @@ async fn read_sse_response(http_response: Response) -> Result<GenerateContentRes
     let candidate = response.candidates.first_mut().unwrap();
 
     let mut lines = http_response.lines();
+    let mut has_text = false;
     while let Some(line) = lines.next().await {
         let line = line?;
         if let Some(data) = line.strip_prefix("data: ") {
@@ -188,8 +189,13 @@ async fn read_sse_response(http_response: Response) -> Result<GenerateContentRes
             if let Some(content) = stream_candidate.content {
                 for part in content.parts {
                     if let Some(text) = part.text {
+                        if text.is_empty() {
+                            // for function, it response with text=Some("") with finish_reason=STOP
+                            break;
+                        }
                         candidate.append_text(&text);
                         console::print(&text).await?;
+                        has_text = true;
                     } else {
                         // except text, all other parts send as whole
                         candidate.content.parts.push(part);
@@ -199,14 +205,13 @@ async fn read_sse_response(http_response: Response) -> Result<GenerateContentRes
             if let Some(reason) = stream_candidate.finish_reason {
                 candidate.finish_reason = reason;
                 if candidate.finish_reason == "STOP" {
+                    if has_text {
+                        console::print("\n").await?;
+                    }
                     break;
                 }
             }
         }
-    }
-
-    if candidate.content.parts.first().unwrap().text.is_some() {
-        console::print("\n").await?;
     }
 
     Ok(response)
