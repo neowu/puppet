@@ -1,5 +1,3 @@
-use std::io;
-use std::io::ErrorKind;
 use std::ops::Not;
 use std::path::Path;
 use std::rc::Rc;
@@ -8,9 +6,7 @@ use std::str;
 use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
 use bytes::Bytes;
-use futures::AsyncBufReadExt;
 use futures::StreamExt;
-use futures::TryStreamExt;
 use reqwest::Response;
 use tokio::fs;
 use tracing::info;
@@ -32,7 +28,9 @@ use crate::llm::ChatOption;
 use crate::util::console;
 use crate::util::exception::Exception;
 use crate::util::http_client;
+use crate::util::http_client::ResponseExt;
 use crate::util::json;
+use crate::util::path::PathExt;
 
 pub struct ChatGPT {
     url: String,
@@ -199,12 +197,7 @@ async fn read_sse_response(http_response: Response) -> Result<ChatResponse, Exce
     // only support one choice, n=1
     let choice = response.choices.first_mut().unwrap();
 
-    let reader = http_response
-        .bytes_stream()
-        .map_err(|e| io::Error::new(ErrorKind::Other, e))
-        .into_async_read();
-
-    let mut lines = reader.lines();
+    let mut lines = http_response.lines();
     while let Some(line) = lines.next().await {
         let line = line?;
 
@@ -267,11 +260,7 @@ async fn image_urls(files: &[&Path]) -> Result<Vec<String>, Exception> {
 }
 
 async fn base64_image_url(path: &Path) -> Result<String, Exception> {
-    let extension = path
-        .extension()
-        .ok_or_else(|| Exception::ValidationError(format!("file must have extension, path={}", path.to_string_lossy())))?
-        .to_string_lossy();
-    let extension = extension.as_ref();
+    let extension = path.file_extension()?;
     let content = fs::read(path).await?;
     let mime_type = match extension {
         "jpg" => Ok("image/jpeg".to_string()),

@@ -17,6 +17,7 @@ use tracing::info;
 use crate::llm;
 use crate::llm::ChatOption;
 use crate::util::exception::Exception;
+use crate::util::path::PathExt;
 
 #[derive(Args)]
 pub struct Complete {
@@ -105,19 +106,19 @@ impl Complete {
             let pattern = self.pattern(file).await?;
             info!("include files, pattern: {pattern}");
             for entry in glob(&pattern)? {
-                let entry = entry?;
-                let extension = extension(&entry)?;
+                let path = entry?;
+                let extension = path.file_extension()?;
                 match extension {
                     "txt" | "md" => {
-                        message.push_str(&fs::read_to_string(entry).await?);
+                        message.push_str(&fs::read_to_string(path).await?);
                     }
                     "java" | "rs" => {
-                        message.push_str(&format!("```{} (path: {})\n", language(extension)?, entry.to_string_lossy()));
-                        message.push_str(&fs::read_to_string(entry).await?);
+                        message.push_str(&format!("```{} (path: {})\n", language(extension)?, path.to_string_lossy()));
+                        message.push_str(&fs::read_to_string(path).await?);
                         message.push_str("```\n");
                     }
                     _ => {
-                        files.push(entry);
+                        files.push(path);
                     }
                 }
             }
@@ -138,13 +139,6 @@ impl Complete {
         }
         Ok(pattern.to_string())
     }
-}
-
-fn extension(file: &Path) -> Result<&str, Exception> {
-    file.extension()
-        .ok_or_else(|| Exception::ValidationError(format!("file must have a valid extension, path={}", file.to_string_lossy())))?
-        .to_str()
-        .ok_or_else(|| Exception::ValidationError(format!("path is invalid, path={}", file.to_string_lossy())))
 }
 
 async fn add_message(model: &mut llm::Model, state: &ParserState, message: String, files: Vec<PathBuf>) -> Result<(), Exception> {

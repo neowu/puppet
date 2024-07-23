@@ -1,5 +1,3 @@
-use std::io;
-use std::io::ErrorKind;
 use std::ops::Not;
 use std::path::Path;
 use std::rc::Rc;
@@ -8,9 +6,7 @@ use std::str;
 use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
 use bytes::Bytes;
-use futures::AsyncBufReadExt;
 use futures::StreamExt;
-use futures::TryStreamExt;
 use reqwest::Response;
 use tokio::fs;
 use tracing::info;
@@ -33,7 +29,9 @@ use crate::llm::ChatOption;
 use crate::util::console;
 use crate::util::exception::Exception;
 use crate::util::http_client;
+use crate::util::http_client::ResponseExt;
 use crate::util::json;
+use crate::util::path::PathExt;
 
 pub struct Gemini {
     url: String,
@@ -177,12 +175,7 @@ async fn read_sse_response(http_response: Response) -> Result<GenerateContentRes
     };
     let candidate = response.candidates.first_mut().unwrap();
 
-    let reader = http_response
-        .bytes_stream()
-        .map_err(|e| io::Error::new(ErrorKind::Other, e))
-        .into_async_read();
-
-    let mut lines = reader.lines();
+    let mut lines = http_response.lines();
     while let Some(line) = lines.next().await {
         let line = line?;
         if let Some(data) = line.strip_prefix("data: ") {
@@ -192,12 +185,6 @@ async fn read_sse_response(http_response: Response) -> Result<GenerateContentRes
             }
 
             let stream_candidate = stream_response.candidates.into_iter().next().unwrap();
-            if let Some(reason) = stream_candidate.finish_reason {
-                candidate.finish_reason = reason;
-                if candidate.finish_reason == "STOP" {
-                    break;
-                }
-            }
             if let Some(content) = stream_candidate.content {
                 for part in content.parts {
                     if let Some(text) = part.text {
@@ -207,6 +194,12 @@ async fn read_sse_response(http_response: Response) -> Result<GenerateContentRes
                         // except text, all other parts send as whole
                         candidate.content.parts.push(part);
                     }
+                }
+            }
+            if let Some(reason) = stream_candidate.finish_reason {
+                candidate.finish_reason = reason;
+                if candidate.finish_reason == "STOP" {
+                    break;
                 }
             }
         }
@@ -228,11 +221,7 @@ async fn inline_datas(files: &[&Path]) -> Result<Vec<InlineData>, Exception> {
 }
 
 async fn inline_data(path: &Path) -> Result<InlineData, Exception> {
-    let extension = path
-        .extension()
-        .ok_or_else(|| Exception::ValidationError(format!("file must have extension, path={}", path.to_string_lossy())))?
-        .to_string_lossy();
-    let extension = extension.as_ref();
+    let extension = path.file_extension()?;
     let content = fs::read(path).await?;
     let mime_type = match extension {
         "jpg" => Ok("image/jpeg".to_string()),
