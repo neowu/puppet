@@ -14,6 +14,7 @@ use tracing::info;
 use super::chatgpt_api::ChatCompletionChoice;
 use super::chatgpt_api::ChatResponse;
 use super::chatgpt_api::ChatResponseMessage;
+use super::chatgpt_api::FunctionCall;
 use super::chatgpt_api::ToolCall;
 use super::chatgpt_api::Usage;
 use crate::azure::chatgpt_api::ChatRequest;
@@ -222,7 +223,7 @@ async fn read_sse_response(http_response: Response) -> Result<ChatResponse, Exce
                         choice.message.tool_calls.as_mut().unwrap().push(ToolCall {
                             id: stream_call.id.unwrap(),
                             r#type: "function".to_string(),
-                            function: super::chatgpt_api::FunctionCall {
+                            function: FunctionCall {
                                 name,
                                 arguments: String::new(),
                             },

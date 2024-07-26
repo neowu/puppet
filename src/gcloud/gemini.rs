@@ -1,4 +1,3 @@
-use std::ops::Not;
 use std::path::Path;
 use std::rc::Rc;
 use std::str;
@@ -14,6 +13,7 @@ use tracing::info;
 use super::gemini_api::Content;
 use super::gemini_api::GenerateContentResponse;
 use super::gemini_api::GenerationConfig;
+use super::gemini_api::GoogleSearchRetrieval;
 use super::gemini_api::InlineData;
 use super::gemini_api::StreamGenerateContent;
 use super::gemini_api::Tool;
@@ -52,14 +52,23 @@ impl Gemini {
         function_implementations: FunctionImplementations,
     ) -> Self {
         let url = format!("{endpoint}/v1/projects/{project}/locations/{location}/publishers/google/models/{model}:streamGenerateContent?alt=sse");
+        let tools = if function_declarations.is_empty() {
+            // google_search_retrieval can not be used with function
+            vec![Tool {
+                function_declarations: None,
+                google_search_retrieval: Some(GoogleSearchRetrieval { disable_attribution: false }),
+            }]
+        } else {
+            vec![Tool {
+                function_declarations: Some(function_declarations),
+                google_search_retrieval: None,
+            }]
+        };
         Gemini {
             url,
             contents: Rc::new(vec![]),
             system_instruction: None,
-            tools: function_declarations
-                .is_empty()
-                .not()
-                .then_some(Rc::from(vec![Tool { function_declarations }])),
+            tools: Some(Rc::from(tools)),
             function_implementations,
             option: None,
         }
@@ -185,30 +194,32 @@ async fn read_sse_response(http_response: Response) -> Result<GenerateContentRes
                 response.usage_metadata = value;
             }
 
-            let stream_candidate = stream_response.candidates.into_iter().next().unwrap();
-            if let Some(content) = stream_candidate.content {
-                for part in content.parts {
-                    if let Some(text) = part.text {
-                        if text.is_empty() {
-                            // for function, it response with text=Some("") with finish_reason=STOP
-                            break;
+            if let Some(stream_candidates) = stream_response.candidates {
+                let stream_candidate = stream_candidates.into_iter().next().unwrap();
+                if let Some(content) = stream_candidate.content {
+                    for part in content.parts {
+                        if let Some(text) = part.text {
+                            if text.is_empty() {
+                                // for function, it response with text=Some("") with finish_reason=STOP
+                                break;
+                            }
+                            candidate.append_text(&text);
+                            console::print(&text).await?;
+                            has_text = true;
+                        } else {
+                            // except text, all other parts send as whole
+                            candidate.content.parts.push(part);
                         }
-                        candidate.append_text(&text);
-                        console::print(&text).await?;
-                        has_text = true;
-                    } else {
-                        // except text, all other parts send as whole
-                        candidate.content.parts.push(part);
                     }
                 }
-            }
-            if let Some(reason) = stream_candidate.finish_reason {
-                candidate.finish_reason = reason;
-                if candidate.finish_reason == "STOP" {
-                    if has_text {
-                        console::print("\n").await?;
+                if let Some(reason) = stream_candidate.finish_reason {
+                    candidate.finish_reason = reason;
+                    if candidate.finish_reason == "STOP" {
+                        if has_text {
+                            console::print("\n").await?;
+                        }
+                        break;
                     }
-                    break;
                 }
             }
         }

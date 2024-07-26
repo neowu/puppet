@@ -76,8 +76,17 @@ impl Content {
 
 #[derive(Debug, Serialize)]
 pub struct Tool {
-    #[serde(rename = "functionDeclarations")]
-    pub function_declarations: Vec<Function>,
+    #[serde(rename = "functionDeclarations", skip_serializing_if = "Option::is_none")]
+    pub function_declarations: Option<Vec<Function>>,
+
+    #[serde(rename = "googleSearchRetrieval", skip_serializing_if = "Option::is_none")]
+    pub google_search_retrieval: Option<GoogleSearchRetrieval>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GoogleSearchRetrieval {
+    #[serde(rename = "disableAttribution")]
+    pub disable_attribution: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -120,7 +129,7 @@ pub struct InlineData {
 
 #[derive(Debug, Deserialize)]
 pub struct GenerateContentStreamResponse {
-    pub candidates: Vec<StreamCandidate>,
+    pub candidates: Option<Vec<StreamCandidate>>,
     #[serde(rename = "usageMetadata")]
     pub usage_metadata: Option<UsageMetadata>,
 }
