@@ -1,11 +1,13 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::LazyLock;
+use std::sync::Mutex;
+use std::sync::MutexGuard;
 
+use anyhow::anyhow;
+use anyhow::Context;
+use anyhow::Result;
+use log::info;
 use serde::Serialize;
-use tokio::task::JoinSet;
-use tracing::info;
-
-use crate::util::exception::Exception;
 
 // both openai and gemini shares same openai schema
 #[derive(Debug, Serialize)]
@@ -18,8 +20,13 @@ pub struct Function {
 
 pub type FunctionImplementation = dyn Fn(&serde_json::Value) -> serde_json::Value + Send + Sync;
 
-pub struct FunctionImplementations {
-    implementations: HashMap<&'static str, Arc<Box<FunctionImplementation>>>,
+pub struct FunctionStore {
+    implementations: HashMap<&'static str, Box<FunctionImplementation>>,
+}
+
+pub fn function_store<'a>() -> MutexGuard<'a, FunctionStore> {
+    static FUNCTION_STORE: LazyLock<Mutex<FunctionStore>> = LazyLock::new(|| Mutex::new(FunctionStore::new()));
+    FUNCTION_STORE.lock().unwrap()
 }
 
 pub struct FunctionPayload {
@@ -28,42 +35,33 @@ pub struct FunctionPayload {
     pub value: serde_json::Value,
 }
 
-impl FunctionImplementations {
-    pub fn new() -> Self {
-        FunctionImplementations {
+impl FunctionStore {
+    fn new() -> Self {
+        FunctionStore {
             implementations: HashMap::new(),
         }
     }
 
     pub fn add(&mut self, name: &'static str, implementation: Box<FunctionImplementation>) {
-        self.implementations.insert(name, Arc::new(implementation));
+        self.implementations.insert(name, implementation);
     }
 
-    pub async fn call(&self, functions: Vec<FunctionPayload>) -> Result<Vec<FunctionPayload>, Exception> {
-        let mut handles = JoinSet::new();
-        for function in functions {
-            let implementation = self.get(&function.name)?;
-            handles.spawn(async move {
-                info!("call function, id={}, name={}, args={}", function.id, function.name, function.value);
-                FunctionPayload {
-                    id: function.id,
-                    name: function.name,
-                    value: implementation(&function.value),
-                }
-            });
-        }
+    pub fn call(&self, functions: Vec<FunctionPayload>) -> Result<Vec<FunctionPayload>> {
         let mut results = vec![];
-        while let Some(result) = handles.join_next().await {
-            results.push(result?)
+        for function in functions {
+            info!("call function, id={}, name={}, args={}", function.id, function.name, function.value);
+            let implementation = self
+                .implementations
+                .get(function.name.as_str())
+                .with_context(|| anyhow!("function not found, name={}", function.name))?;
+            let value = implementation(&function.value);
+
+            results.push(FunctionPayload {
+                id: function.id,
+                name: function.name,
+                value,
+            })
         }
         Ok(results)
-    }
-
-    fn get(&self, name: &str) -> Result<Arc<Box<FunctionImplementation>>, Exception> {
-        let function = self
-            .implementations
-            .get(name)
-            .ok_or_else(|| Exception::ValidationError(format!("function not found, name={name}")))?;
-        Ok(Arc::clone(function))
     }
 }

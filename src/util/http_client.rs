@@ -1,6 +1,6 @@
 use std::io;
 use std::io::ErrorKind;
-use std::sync::OnceLock;
+use std::sync::LazyLock;
 
 use bytes::Bytes;
 use futures::io::Lines;
@@ -10,18 +10,9 @@ use futures::AsyncBufReadExt;
 use futures::Stream;
 use futures::TryStreamExt;
 
-use super::exception::Exception;
-
 pub fn http_client() -> &'static reqwest::Client {
-    static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
-    HTTP_CLIENT.get_or_init(reqwest::Client::new)
-}
-
-impl From<reqwest::Error> for Exception {
-    fn from(err: reqwest::Error) -> Self {
-        let url = err.url().map_or("", |url| url.as_str()).to_string();
-        Exception::unexpected_with_context(err, &format!("url={url}"))
-    }
+    static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
+    &HTTP_CLIENT
 }
 
 pub trait ResponseExt {

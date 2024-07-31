@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::sync::Arc;
 
 use serde::Deserialize;
 use serde::Serialize;
@@ -7,7 +7,7 @@ use crate::llm::function::Function;
 
 #[derive(Debug, Serialize)]
 pub struct ChatRequest {
-    pub messages: Rc<Vec<ChatRequestMessage>>,
+    pub messages: Arc<Vec<ChatRequestMessage>>,
     pub temperature: f32,
     pub top_p: f32,
     pub stream: bool,
@@ -21,7 +21,7 @@ pub struct ChatRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tools: Option<Rc<[Tool]>>,
+    pub tools: Option<Arc<[Tool]>>,
 }
 
 #[derive(Debug, Serialize)]

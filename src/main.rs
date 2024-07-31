@@ -1,10 +1,10 @@
+use anyhow::Result;
 use clap::Parser;
 use clap::Subcommand;
 use command::chat::Chat;
 use command::complete::Complete;
 use command::generate_zsh_completion::GenerateZshCompletion;
 use command::speak::Speak;
-use util::exception::Exception;
 
 mod azure;
 mod command;
@@ -36,8 +36,8 @@ pub enum Command {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Exception> {
-    tracing_subscriber::fmt().with_thread_ids(true).init();
+async fn main() -> Result<()> {
+    env_logger::builder().filter_level(log::LevelFilter::Info).init();
     let cli = Cli::parse();
     match cli.command {
         Command::Chat(command) => command.execute().await,

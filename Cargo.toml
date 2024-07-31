@@ -4,8 +4,9 @@ version = "0.3.2"
 edition = "2021"
 
 [dependencies]
-tracing = "0"
-tracing-subscriber = "0"
+anyhow = "1"
+log = "0"
+env_logger = "0"
 clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
 serde = { version = "1", features = ["derive", "rc"] }

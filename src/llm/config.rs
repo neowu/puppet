@@ -1,17 +1,19 @@
 use std::collections::HashMap;
 
+use anyhow::anyhow;
+use anyhow::Context;
+use anyhow::Result;
+use log::info;
 use rand::Rng;
 use serde::Deserialize;
 use serde_json::json;
-use tracing::info;
 
-use super::function::FunctionImplementations;
+use super::function::function_store;
 use crate::azure::chatgpt::ChatGPT;
 use crate::gcloud::gemini::Gemini;
 use crate::llm::function::Function;
 use crate::llm::Model;
 use crate::provider::Provider;
-use crate::util::exception::Exception;
 use crate::util::json;
 
 #[derive(Deserialize, Debug)]
@@ -29,42 +31,37 @@ pub struct ModelConfig {
 }
 
 impl ModelConfig {
-    fn param(&self, name: &str) -> Result<String, Exception> {
+    fn param(&self, name: &str) -> Result<String> {
         let value = self
             .params
             .get(name)
-            .ok_or_else(|| Exception::ValidationError(format!("config param {} is required", name)))?
+            .with_context(|| format!("config param {} is required", name))?
             .to_string();
         Ok(value)
     }
 }
 
 impl Config {
-    pub fn create(&self, name: &str) -> Result<Model, Exception> {
-        let config = self
-            .models
-            .get(name)
-            .ok_or_else(|| Exception::ValidationError(format!("can not find model, name={name}")))?;
+    pub fn create(&self, name: &str) -> Result<Model> {
+        let config = self.models.get(name).with_context(|| format!("can not find model, name={name}"))?;
 
         info!("create model, name={name}, provider={}", json::to_json_value(&config.provider)?);
 
-        let (function_declarations, function_implementations) = load_functions(config)?;
+        let functions = load_functions(config)?;
 
         let mut model = match config.provider {
             Provider::Azure => Model::ChatGPT(ChatGPT::new(
                 config.endpoint.to_string(),
                 config.param("model")?,
                 config.param("api_key")?,
-                function_declarations,
-                function_implementations,
+                functions,
             )),
             Provider::GCloud => Model::Gemini(Gemini::new(
                 config.endpoint.to_string(),
                 config.param("project")?,
                 config.param("location")?,
                 config.param("model")?,
-                function_declarations,
-                function_implementations,
+                functions,
             )),
         };
 
@@ -76,10 +73,9 @@ impl Config {
     }
 }
 
-fn load_functions(config: &ModelConfig) -> Result<(Vec<Function>, FunctionImplementations), Exception> {
+fn load_functions(config: &ModelConfig) -> Result<Vec<Function>> {
     let mut declarations: Vec<Function> = vec![];
-    let mut implementations = FunctionImplementations::new();
-
+    let mut function_store = function_store();
     for function in &config.functions {
         info!("load function, name={function}");
         match function.as_str() {
@@ -98,7 +94,7 @@ fn load_functions(config: &ModelConfig) -> Result<(Vec<Function>, FunctionImplem
                         "required": ["max"]
                     })),
                 });
-                implementations.add(
+                function_store.add(
                     "get_random_number",
                     Box::new(|request| {
                         let max = request.get("max").unwrap().as_i64().unwrap();
@@ -117,7 +113,7 @@ fn load_functions(config: &ModelConfig) -> Result<(Vec<Function>, FunctionImplem
                     description: "close door of home",
                     parameters: None,
                 });
-                implementations.add(
+                function_store.add(
                     "close_door",
                     Box::new(|_request| {
                         json!({
@@ -126,8 +122,8 @@ fn load_functions(config: &ModelConfig) -> Result<(Vec<Function>, FunctionImplem
                     }),
                 );
             }
-            _ => return Err(Exception::ValidationError(format!("unknown function, name={function}"))),
+            _ => return Err(anyhow!("unknown function, name={function}")),
         }
     }
-    Ok((declarations, implementations))
+    Ok(declarations)
 }

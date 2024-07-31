@@ -1,15 +1,19 @@
+use std::fs;
 use std::ops::Not;
 use std::path::Path;
-use std::rc::Rc;
 use std::str;
+use std::sync::Arc;
+use std::sync::Mutex;
 
+use anyhow::anyhow;
+use anyhow::Result;
 use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
 use bytes::Bytes;
 use futures::StreamExt;
+use log::info;
 use reqwest::Response;
-use tokio::fs;
-use tracing::info;
+use tokio::sync::mpsc;
 
 use super::chatgpt_api::ChatCompletionChoice;
 use super::chatgpt_api::ChatResponse;
@@ -22,37 +26,35 @@ use crate::azure::chatgpt_api::ChatRequestMessage;
 use crate::azure::chatgpt_api::ChatStreamResponse;
 use crate::azure::chatgpt_api::Role;
 use crate::azure::chatgpt_api::Tool;
+use crate::llm::function::function_store;
 use crate::llm::function::Function;
-use crate::llm::function::FunctionImplementations;
 use crate::llm::function::FunctionPayload;
 use crate::llm::ChatOption;
-use crate::util::console;
-use crate::util::exception::Exception;
+use crate::llm::TextStream;
+use crate::llm::TokenUsage;
 use crate::util::http_client;
 use crate::util::http_client::ResponseExt;
 use crate::util::json;
 use crate::util::path::PathExt;
 
 pub struct ChatGPT {
+    context: Arc<Mutex<Context>>,
+}
+
+struct Context {
     url: String,
     api_key: String,
-    messages: Rc<Vec<ChatRequestMessage>>,
-    tools: Option<Rc<[Tool]>>,
-    function_implementations: FunctionImplementations,
-    pub option: Option<ChatOption>,
+    messages: Arc<Vec<ChatRequestMessage>>,
+    tools: Option<Arc<[Tool]>>,
+    option: Option<ChatOption>,
+    usage: TokenUsage,
 }
 
 impl ChatGPT {
-    pub fn new(
-        endpoint: String,
-        model: String,
-        api_key: String,
-        function_declarations: Vec<Function>,
-        function_implementations: FunctionImplementations,
-    ) -> Self {
+    pub fn new(endpoint: String, model: String, api_key: String, functions: Vec<Function>) -> Self {
         let url = format!("{endpoint}/openai/deployments/{model}/chat/completions?api-version=2024-06-01");
-        let tools: Option<Rc<[Tool]>> = function_declarations.is_empty().not().then_some(
-            function_declarations
+        let tools: Option<Arc<[Tool]>> = functions.is_empty().not().then_some(
+            functions
                 .into_iter()
                 .map(|function| Tool {
                     r#type: "function",
@@ -61,34 +63,27 @@ impl ChatGPT {
                 .collect(),
         );
         ChatGPT {
-            url,
-            api_key,
-            messages: Rc::new(vec![]),
-            tools,
-            function_implementations,
-            option: None,
+            context: Arc::from(Mutex::new(Context {
+                url,
+                api_key,
+                messages: Arc::new(vec![]),
+                tools,
+                option: None,
+                usage: TokenUsage::default(),
+            })),
         }
     }
 
-    pub async fn chat(&mut self) -> Result<&str, Exception> {
-        self.process().await?;
-
-        Ok(self
-            .messages
-            .last()
-            .unwrap()
-            .content
-            .as_ref()
-            .unwrap()
-            .first()
-            .unwrap()
-            .text
-            .as_ref()
-            .unwrap())
+    pub async fn generate(&self) -> Result<TextStream> {
+        let (tx, rx) = mpsc::channel(64);
+        let context = Arc::clone(&self.context);
+        tokio::spawn(async move { process(context, tx).await.unwrap() });
+        Ok(TextStream::new(rx))
     }
 
     pub fn system_message(&mut self, message: String) {
-        let messages = Rc::get_mut(&mut self.messages).unwrap();
+        let mut context = self.context.lock().unwrap();
+        let messages = Arc::get_mut(&mut context.messages).unwrap();
         if let Some(message) = messages.first() {
             if let Role::System = message.role {
                 messages.remove(0);
@@ -97,53 +92,79 @@ impl ChatGPT {
         messages.insert(0, ChatRequestMessage::new_message(Role::System, message))
     }
 
-    pub async fn add_user_message(&mut self, message: String, files: &[&Path]) -> Result<(), Exception> {
-        let image_urls = image_urls(files).await?;
-        self.add_message(ChatRequestMessage::new_user_message(message, image_urls));
+    pub fn add_user_message(&mut self, message: String, files: &[&Path]) -> Result<()> {
+        let image_urls = image_urls(files)?;
+        self.context
+            .lock()
+            .unwrap()
+            .add_message(ChatRequestMessage::new_user_message(message, image_urls));
         Ok(())
     }
 
     pub fn add_assistant_message(&mut self, message: String) {
-        self.add_message(ChatRequestMessage::new_message(Role::Assistant, message));
+        self.context
+            .lock()
+            .unwrap()
+            .add_message(ChatRequestMessage::new_message(Role::Assistant, message));
     }
 
-    async fn process(&mut self) -> Result<(), Exception> {
-        loop {
-            let http_response = self.call_api().await?;
-            let response = read_sse_response(http_response).await?;
-            info!(
-                "usage, prompt_tokens={}, completion_tokens={}",
-                response.usage.prompt_tokens, response.usage.completion_tokens
-            );
+    pub fn option(&mut self, option: ChatOption) {
+        self.context.lock().unwrap().option = Some(option);
+    }
 
-            let message = response.choices.into_iter().next().unwrap().message;
+    pub fn usage(&self) -> TokenUsage {
+        self.context.lock().unwrap().usage.clone()
+    }
+}
 
-            if let Some(calls) = message.tool_calls {
-                let mut functions = Vec::with_capacity(calls.len());
-                for call in calls.iter() {
-                    functions.push(FunctionPayload {
-                        id: call.id.to_string(),
-                        name: call.function.name.to_string(),
-                        value: json::from_json::<serde_json::Value>(&call.function.arguments)?,
-                    })
-                }
-                self.add_message(ChatRequestMessage::new_function_call(calls));
+impl Context {
+    fn add_message(&mut self, message: ChatRequestMessage) {
+        Arc::get_mut(&mut self.messages).unwrap().push(message);
+    }
+}
 
-                let results = self.function_implementations.call(functions).await?;
-                for result in results {
-                    self.add_message(ChatRequestMessage::new_function_response(result.id, json::to_json(&result.value)?));
-                }
-            } else {
-                self.add_message(ChatRequestMessage::new_message(Role::Assistant, message.content.unwrap()));
-                return Ok(());
+async fn process(context: Arc<Mutex<Context>>, tx: mpsc::Sender<String>) -> Result<()> {
+    loop {
+        let http_response = call_api(Arc::clone(&context)).await?;
+        let response = read_sse_response(http_response, &tx).await?;
+
+        let mut context = context.lock().unwrap();
+        context.usage.prompt_tokens += response.usage.prompt_tokens;
+        context.usage.completion_tokens += response.usage.completion_tokens;
+
+        let message = response.choices.into_iter().next().unwrap().message;
+
+        if let Some(calls) = message.tool_calls {
+            let mut functions = Vec::with_capacity(calls.len());
+            for call in calls.iter() {
+                functions.push(FunctionPayload {
+                    id: call.id.to_string(),
+                    name: call.function.name.to_string(),
+                    value: json::from_json::<serde_json::Value>(&call.function.arguments)?,
+                })
             }
+
+            context.add_message(ChatRequestMessage::new_function_call(calls));
+            let results = function_store().call(functions)?;
+
+            for result in results {
+                context.add_message(ChatRequestMessage::new_function_response(result.id, json::to_json(&result.value)?));
+            }
+        } else {
+            context.add_message(ChatRequestMessage::new_message(Role::Assistant, message.content.unwrap()));
+            return Ok(());
         }
     }
+}
 
-    async fn call_api(&mut self) -> Result<Response, Exception> {
+async fn call_api(context: Arc<Mutex<Context>>) -> Result<Response> {
+    let http_request;
+    let body;
+    {
+        let context = context.lock().unwrap();
         let request = ChatRequest {
-            messages: Rc::clone(&self.messages),
-            temperature: self.option.as_ref().map_or(0.7, |option| option.temperature),
+            messages: Arc::clone(&context.messages),
+            temperature: context.option.as_ref().map_or(0.7, |option| option.temperature),
             top_p: 0.95,
             stream: true,
             // stream_options: Some(StreamOptions { include_usage: true }),
@@ -152,38 +173,30 @@ impl ChatGPT {
             max_tokens: 4096,
             presence_penalty: 0.0,
             frequency_penalty: 0.0,
-            tool_choice: self.tools.is_some().then_some("auto".to_string()),
-            tools: self.tools.clone(),
+            tool_choice: context.tools.is_some().then_some("auto".to_string()),
+            tools: context.tools.clone(),
         };
 
-        let body = json::to_json(&request)?;
-        let body = Bytes::from(body);
-        let request = http_client::http_client()
-            .post(&self.url)
+        body = Bytes::from(json::to_json(&request)?);
+        http_request = http_client::http_client()
+            .post(&context.url)
             .header("Content-Type", "application/json")
-            .header("api-key", &self.api_key)
+            .header("api-key", &context.api_key)
             .body(body.clone());
-
-        let response = request.send().await?;
-        let status = response.status();
-        if status != 200 {
-            let body = str::from_utf8(&body)?;
-            info!("body={}", body);
-            let response_text = response.text().await?;
-            return Err(Exception::ExternalError(format!(
-                "failed to call azure api, status={status}, response={response_text}"
-            )));
-        }
-
-        Ok(response)
+    }
+    let response = http_request.send().await?;
+    let status = response.status();
+    if status != 200 {
+        let body = str::from_utf8(&body)?;
+        info!("body={}", body);
+        let response_text = response.text().await?;
+        return Err(anyhow!("failed to call azure api, status={status}, response={response_text}"));
     }
 
-    fn add_message(&mut self, message: ChatRequestMessage) {
-        Rc::get_mut(&mut self.messages).unwrap().push(message);
-    }
+    Ok(response)
 }
 
-async fn read_sse_response(http_response: Response) -> Result<ChatResponse, Exception> {
+async fn read_sse_response(http_response: Response, tx: &mpsc::Sender<String>) -> Result<ChatResponse> {
     let mut response = ChatResponse {
         choices: vec![ChatCompletionChoice {
             index: 0,
@@ -233,14 +246,11 @@ async fn read_sse_response(http_response: Response) -> Result<ChatResponse, Exce
                     tool_call.function.arguments.push_str(&stream_call.function.arguments);
                 } else if let Some(content) = stream_choice.delta.content {
                     choice.append_content(&content);
-                    console::print(&content).await?;
+                    tx.send(content).await.unwrap();
                 }
 
                 if let Some(finish_reason) = stream_choice.finish_reason {
                     choice.finish_reason = finish_reason;
-                    if choice.finish_reason == "stop" {
-                        console::print("\n").await?;
-                    }
                 }
             }
 
@@ -252,24 +262,21 @@ async fn read_sse_response(http_response: Response) -> Result<ChatResponse, Exce
     Ok(response)
 }
 
-async fn image_urls(files: &[&Path]) -> Result<Vec<String>, Exception> {
+fn image_urls(files: &[&Path]) -> Result<Vec<String>> {
     let mut image_urls = Vec::with_capacity(files.len());
     for file in files {
-        image_urls.push(base64_image_url(file).await?)
+        image_urls.push(base64_image_url(file)?)
     }
     Ok(image_urls)
 }
 
-async fn base64_image_url(path: &Path) -> Result<String, Exception> {
+fn base64_image_url(path: &Path) -> Result<String> {
     let extension = path.file_extension()?;
-    let content = fs::read(path).await?;
+    let content = fs::read(path)?;
     let mime_type = match extension {
         "jpg" => Ok("image/jpeg".to_string()),
         "png" => Ok("image/png".to_string()),
-        _ => Err(Exception::ValidationError(format!(
-            "not supported extension, path={}",
-            path.to_string_lossy()
-        ))),
+        _ => Err(anyhow!("not supported extension, path={}", path.to_string_lossy())),
     }?;
     Ok(format!("data:{mime_type};base64,{}", BASE64_STANDARD.encode(content)))
 }

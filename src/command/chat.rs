@@ -1,15 +1,18 @@
+use std::io::stdout;
+use std::io::Write;
 use std::mem;
 use std::path::Path;
 use std::path::PathBuf;
 
+use anyhow::Result;
 use clap::Args;
+use futures::StreamExt;
+use log::info;
 use tokio::io::stdin;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::BufReader;
 
 use crate::llm;
-use crate::util::console;
-use crate::util::exception::Exception;
 
 #[derive(Args)]
 pub struct Chat {
@@ -21,27 +24,27 @@ pub struct Chat {
 }
 
 impl Chat {
-    pub async fn execute(&self) -> Result<(), Exception> {
-        let config = llm::load(self.conf.as_deref()).await?;
+    pub async fn execute(&self) -> Result<()> {
+        let config = llm::load(self.conf.as_deref())?;
         let mut model = config.create(&self.model)?;
 
-        let welcome_text = r#"
----
+        println!(
+            r"---
 # Welcome to Puppet Chat
 ---
 # Usage Instructions:
 
 - Type /quit to quit the application.
 
-- Type /file {file} to add a file.
----
-"#;
-        console::print(welcome_text).await?;
+- Type /file {{file}} to add a file.
+---"
+        );
         let reader = BufReader::new(stdin());
         let mut lines = reader.lines();
         let mut files: Vec<PathBuf> = vec![];
         loop {
-            console::print("> ").await?;
+            print!("> ");
+            stdout().flush()?;
             let Some(line) = lines.next_line().await? else {
                 break;
             };
@@ -51,17 +54,27 @@ impl Chat {
             if let Some(file) = line.strip_prefix("/file ") {
                 let file = PathBuf::from(file);
                 if !file.exists() {
-                    console::print(&format!("file not exists, path: {}\n", file.to_string_lossy())).await?;
+                    println!("file not exists, path: {}", file.to_string_lossy());
                 } else {
-                    console::print(&format!("added file, path: {}\n", file.to_string_lossy())).await?;
+                    println!("added file, path: {}", file.to_string_lossy());
                     files.push(file);
                 }
             } else {
                 let files = mem::take(&mut files);
                 let files: Vec<&Path> = files.iter().map(|p| p.as_path()).collect();
-                model.add_user_message(line, &files).await?;
+                model.add_user_message(line, &files)?;
 
-                model.chat().await?;
+                let mut stream = model.generate().await?;
+                while let Some(text) = stream.next().await {
+                    print!("{text}");
+                    stdout().flush()?;
+                }
+                println!();
+                let usage = model.usage();
+                info!(
+                    "usage, prompt_tokens={}, completion_tokens={}",
+                    usage.prompt_tokens, usage.completion_tokens
+                );
             }
         }
 

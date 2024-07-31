@@ -1,22 +1,24 @@
+use std::io::stdout;
+use std::io::Write;
 use std::mem;
 use std::path::Path;
 use std::path::PathBuf;
 use std::str::FromStr;
 
+use anyhow::anyhow;
+use anyhow::Result;
 use clap::Args;
+use futures::StreamExt;
 use glob::glob;
-use glob::GlobError;
-use glob::PatternError;
+use log::info;
 use regex::Regex;
 use tokio::fs;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::io::BufReader;
-use tracing::info;
 
 use crate::llm;
 use crate::llm::ChatOption;
-use crate::util::exception::Exception;
 use crate::util::path::PathExt;
 
 #[derive(Args)]
@@ -38,8 +40,8 @@ enum ParserState {
 }
 
 impl Complete {
-    pub async fn execute(&self) -> Result<(), Exception> {
-        let config = llm::load(self.conf.as_deref()).await?;
+    pub async fn execute(&self) -> Result<()> {
+        let config = llm::load(self.conf.as_deref())?;
         let mut model = config.create(&self.model)?;
 
         let prompt = fs::OpenOptions::new().read(true).open(&self.prompt).await?;
@@ -62,14 +64,24 @@ impl Complete {
         add_message(&mut model, &state, message, files).await?;
 
         if !matches!(state, ParserState::User) {
-            return Err(Exception::ValidationError("last message must be user message".to_string()));
+            return Err(anyhow!("last message must be user message".to_string()));
         }
 
-        let assistant_message = model.chat().await?;
+        let mut stream = model.generate().await?;
         let mut prompt = fs::OpenOptions::new().append(true).open(&self.prompt).await?;
         prompt.write_all(format!("\n# assistant ({})\n\n", self.model).as_bytes()).await?;
-        prompt.write_all(assistant_message.as_bytes()).await?;
+        while let Some(text) = stream.next().await {
+            print!("{text}");
+            stdout().flush()?;
+            prompt.write_all(text.as_bytes()).await?;
+        }
         prompt.write_all(b"\n").await?;
+        println!();
+        let usage = model.usage();
+        info!(
+            "usage, prompt_tokens={}, completion_tokens={}",
+            usage.prompt_tokens, usage.completion_tokens
+        );
         Ok(())
     }
 
@@ -80,10 +92,10 @@ impl Complete {
         model: &mut llm::Model,
         message: &mut String,
         files: &mut Vec<PathBuf>,
-    ) -> Result<Option<ParserState>, Exception> {
+    ) -> Result<Option<ParserState>> {
         if line.starts_with("# system") {
             if !message.is_empty() {
-                return Err(Exception::ValidationError("system message must be at first".to_string()));
+                return Err(anyhow!("system message must be at first"));
             }
             if let Some(option) = parse_option(line) {
                 info!("option: {:?}", option);
@@ -98,9 +110,7 @@ impl Complete {
             return Ok(Some(ParserState::Assistant));
         } else if let Some(file) = line.strip_prefix("> file: ") {
             if !matches!(state, ParserState::User) {
-                return Err(Exception::ValidationError(format!(
-                    "file can only be included in user message, line={line}"
-                )));
+                return Err(anyhow!("file can only be included in user message, line={line}"));
             }
 
             let pattern = self.pattern(file).await?;
@@ -129,7 +139,7 @@ impl Complete {
         Ok(None)
     }
 
-    async fn pattern(&self, pattern: &str) -> Result<String, Exception> {
+    async fn pattern(&self, pattern: &str) -> Result<String> {
         if !pattern.starts_with('/') {
             return Ok(format!(
                 "{}/{}",
@@ -141,7 +151,7 @@ impl Complete {
     }
 }
 
-async fn add_message(model: &mut llm::Model, state: &ParserState, message: String, files: Vec<PathBuf>) -> Result<(), Exception> {
+async fn add_message(model: &mut llm::Model, state: &ParserState, message: String, files: Vec<PathBuf>) -> Result<()> {
     match state {
         ParserState::System => {
             info!("set system message: {}", message);
@@ -153,7 +163,7 @@ async fn add_message(model: &mut llm::Model, state: &ParserState, message: Strin
             for file in files.iter() {
                 info!("add user data: {}", file.to_string_lossy());
             }
-            model.add_user_message(message, &files).await?;
+            model.add_user_message(message, &files)?;
         }
         ParserState::Assistant => {
             info!("add assistent message: {}", message);
@@ -173,23 +183,11 @@ fn parse_option(line: &str) -> Option<ChatOption> {
     }
 }
 
-fn language(extenstion: &str) -> Result<&'static str, Exception> {
+fn language(extenstion: &str) -> Result<&'static str> {
     match extenstion {
         "java" => Ok("java"),
         "rs" => Ok("rust"),
-        _ => Err(Exception::ValidationError(format!("unsupported extension, ext={}", extenstion))),
-    }
-}
-
-impl From<PatternError> for Exception {
-    fn from(err: PatternError) -> Self {
-        Exception::unexpected(err)
-    }
-}
-
-impl From<GlobError> for Exception {
-    fn from(err: GlobError) -> Self {
-        Exception::unexpected(err)
+        _ => Err(anyhow!("unsupported extension, ext={}", extenstion)),
     }
 }
 

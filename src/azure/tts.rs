@@ -1,4 +1,6 @@
-use crate::util::exception::Exception;
+use anyhow::anyhow;
+use anyhow::Result;
+
 use crate::util::http_client;
 
 pub struct AzureTTS {
@@ -9,7 +11,7 @@ pub struct AzureTTS {
 }
 
 impl AzureTTS {
-    pub async fn synthesize(&self, text: &str) -> Result<Vec<u8>, Exception> {
+    pub async fn synthesize(&self, text: &str) -> Result<Vec<u8>> {
         let body = format!(
             r#"<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="https://www.w3.org/2001/mstts" xml:lang="en-US">
                 <voice name="{}"><mstts:express-as style="narration-relaxed"><![CDATA[
@@ -31,9 +33,7 @@ impl AzureTTS {
         let status = response.status();
         if status != 200 {
             let response_text = response.text().await?;
-            return Err(Exception::ExternalError(format!(
-                "failed to call azure api, status={status}, response={response_text}"
-            )));
+            return Err(anyhow!("failed to call azure api, status={status}, response={response_text}"));
         }
 
         Ok(response.bytes().await?.to_vec())

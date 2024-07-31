@@ -1,14 +1,14 @@
 use std::borrow::Cow;
 
+use anyhow::anyhow;
+use anyhow::Result;
 use base64::prelude::BASE64_STANDARD;
-use base64::DecodeError;
 use base64::Engine;
+use log::info;
 use serde::Deserialize;
 use serde::Serialize;
-use tracing::info;
 
 use super::token;
-use crate::util::exception::Exception;
 use crate::util::http_client;
 use crate::util::json;
 
@@ -19,7 +19,7 @@ pub struct GCloudTTS {
 }
 
 impl GCloudTTS {
-    pub async fn synthesize(&self, text: &str) -> Result<Vec<u8>, Exception> {
+    pub async fn synthesize(&self, text: &str) -> Result<Vec<u8>> {
         info!("call gcloud synthesize api, endpoint={}", self.endpoint);
         let request = SynthesizeRequest {
             audio_config: AudioConfig {
@@ -49,9 +49,7 @@ impl GCloudTTS {
         let status = response.status();
         if status != 200 {
             let response_text = response.text().await?;
-            return Err(Exception::ExternalError(format!(
-                "failed to call gcloud api, status={status}, response={response_text}"
-            )));
+            return Err(anyhow!("failed to call gcloud api, status={status}, response={response_text}"));
         }
 
         let response_body = response.text_with_charset("utf-8").await?;
@@ -97,10 +95,4 @@ struct Voice<'a> {
 struct SynthesizeResponse {
     #[serde(rename = "audioContent")]
     audio_content: String,
-}
-
-impl From<DecodeError> for Exception {
-    fn from(err: DecodeError) -> Self {
-        Exception::unexpected(err)
-    }
 }

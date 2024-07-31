@@ -1,17 +1,18 @@
 use std::env::temp_dir;
 use std::path::PathBuf;
 
+use anyhow::anyhow;
+use anyhow::Result;
 use clap::arg;
 use clap::Args;
+use log::info;
 use tokio::fs;
 use tokio::io::stdin;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
-use tracing::info;
 use uuid::Uuid;
 
 use crate::tts;
-use crate::util::exception::Exception;
 
 #[derive(Args)]
 pub struct Speak {
@@ -29,9 +30,9 @@ pub struct Speak {
 }
 
 impl Speak {
-    pub async fn execute(&self) -> Result<(), Exception> {
+    pub async fn execute(&self) -> Result<()> {
         if !self.stdin && self.text.is_none() {
-            return Err(Exception::ValidationError("must specify --stdin or --text".to_string()));
+            return Err(anyhow!("must specify --stdin or --text".to_string()));
         }
 
         let speech = tts::load(self.conf.as_deref(), &self.model).await?;
@@ -53,7 +54,7 @@ impl Speak {
     }
 }
 
-async fn play(audio: Vec<u8>) -> Result<(), Exception> {
+async fn play(audio: Vec<u8>) -> Result<()> {
     let temp_file = temp_dir().join(format!("{}.wav", Uuid::new_v4()));
     fs::write(&temp_file, &audio).await?;
     info!("play audio file, file={}", temp_file.to_string_lossy());

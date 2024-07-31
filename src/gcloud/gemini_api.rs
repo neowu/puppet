@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::sync::Arc;
 
 use serde::Deserialize;
 use serde::Serialize;
@@ -8,13 +8,13 @@ use crate::llm::function::FunctionPayload;
 
 #[derive(Debug, Serialize)]
 pub struct StreamGenerateContent {
-    pub contents: Rc<Vec<Content>>,
+    pub contents: Arc<Vec<Content>>,
     #[serde(rename = "systemInstruction", skip_serializing_if = "Option::is_none")]
-    pub system_instruction: Option<Rc<Content>>,
+    pub system_instruction: Option<Arc<Content>>,
     #[serde(rename = "generationConfig")]
     pub generation_config: GenerationConfig,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tools: Option<Rc<[Tool]>>,
+    pub tools: Option<Arc<[Tool]>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
