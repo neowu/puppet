@@ -252,6 +252,7 @@ async fn read_sse_response(http_response: Response, tx: &mpsc::Sender<String>) -
                 if let Some(finish_reason) = stream_choice.finish_reason {
                     choice.finish_reason = finish_reason;
                     if choice.finish_reason == "stop" {
+                        // chatgpt doesn't return '\n' at end of message
                         tx.send("\n".to_string()).await?;
                     }
                 }
