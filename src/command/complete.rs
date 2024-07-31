@@ -75,8 +75,6 @@ impl Complete {
             stdout().flush()?;
             prompt.write_all(text.as_bytes()).await?;
         }
-        prompt.write_all(b"\n").await?;
-        println!();
         let usage = model.usage();
         info!(
             "usage, prompt_tokens={}, completion_tokens={}",

@@ -69,7 +69,6 @@ impl Chat {
                     print!("{text}");
                     stdout().flush()?;
                 }
-                println!();
                 let usage = model.usage();
                 info!(
                     "usage, prompt_tokens={}, completion_tokens={}",

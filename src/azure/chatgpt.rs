@@ -246,11 +246,14 @@ async fn read_sse_response(http_response: Response, tx: &mpsc::Sender<String>) -
                     tool_call.function.arguments.push_str(&stream_call.function.arguments);
                 } else if let Some(content) = stream_choice.delta.content {
                     choice.append_content(&content);
-                    tx.send(content).await.unwrap();
+                    tx.send(content).await?;
                 }
 
                 if let Some(finish_reason) = stream_choice.finish_reason {
                     choice.finish_reason = finish_reason;
+                    if choice.finish_reason == "stop" {
+                        tx.send("\n".to_string()).await?;
+                    }
                 }
             }
 

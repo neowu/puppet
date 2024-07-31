@@ -90,10 +90,11 @@ impl Gemini {
 
     pub fn add_user_text(&mut self, text: String, files: &[&Path]) -> Result<()> {
         let data = inline_datas(files)?;
+        let mut context = self.context.lock().unwrap();
         if !data.is_empty() {
-            self.context.lock().unwrap().tools = None; // function call is not supported with inline data
+            context.tools = None; // function call is not supported with inline data
         }
-        self.context.lock().unwrap().add_content(Content::new_user_text(text, data));
+        context.add_content(Content::new_user_text(text, data));
         Ok(())
     }
 
