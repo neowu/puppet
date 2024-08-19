@@ -10,10 +10,7 @@ use futures::AsyncBufReadExt;
 use futures::Stream;
 use futures::TryStreamExt;
 
-pub fn http_client() -> &'static reqwest::Client {
-    static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
-    &HTTP_CLIENT
-}
+pub static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
 
 pub trait ResponseExt {
     fn lines(self) -> Lines<IntoAsyncRead<MapErr<impl Stream<Item = Result<Bytes, reqwest::Error>>, impl FnMut(reqwest::Error) -> io::Error>>>;

@@ -9,7 +9,7 @@ use serde::Deserialize;
 use serde::Serialize;
 
 use super::token;
-use crate::util::http_client;
+use crate::util::http_client::HTTP_CLIENT;
 use crate::util::json;
 
 pub struct GCloudTTS {
@@ -36,7 +36,7 @@ impl GCloudTTS {
         };
 
         let body = json::to_json(&request)?;
-        let response = http_client::http_client()
+        let response = HTTP_CLIENT
             .post(&self.endpoint)
             .bearer_auth(token())
             .header("x-goog-user-project", &self.project)

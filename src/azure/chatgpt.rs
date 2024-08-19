@@ -26,14 +26,14 @@ use crate::azure::chatgpt_api::ChatRequestMessage;
 use crate::azure::chatgpt_api::ChatStreamResponse;
 use crate::azure::chatgpt_api::Role;
 use crate::azure::chatgpt_api::Tool;
-use crate::llm::function::function_store;
 use crate::llm::function::Function;
 use crate::llm::function::FunctionPayload;
+use crate::llm::function::FUNCTION_STORE;
 use crate::llm::ChatOption;
 use crate::llm::TextStream;
 use crate::llm::TokenUsage;
-use crate::util::http_client;
 use crate::util::http_client::ResponseExt;
+use crate::util::http_client::HTTP_CLIENT;
 use crate::util::json;
 use crate::util::path::PathExt;
 
@@ -145,7 +145,7 @@ async fn process(context: Arc<Mutex<Context>>, tx: mpsc::Sender<String>) -> Resu
             }
 
             context.add_message(ChatRequestMessage::new_function_call(calls));
-            let results = function_store().call(functions)?;
+            let results = FUNCTION_STORE.lock().unwrap().call(functions)?;
 
             for result in results {
                 context.add_message(ChatRequestMessage::new_function_response(result.id, json::to_json(&result.value)?));
@@ -178,7 +178,7 @@ async fn call_api(context: Arc<Mutex<Context>>) -> Result<Response> {
         };
 
         body = Bytes::from(json::to_json(&request)?);
-        http_request = http_client::http_client()
+        http_request = HTTP_CLIENT
             .post(&context.url)
             .header("Content-Type", "application/json")
             .header("api-key", &context.api_key)

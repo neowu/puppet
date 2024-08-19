@@ -8,7 +8,7 @@ use rand::Rng;
 use serde::Deserialize;
 use serde_json::json;
 
-use super::function::function_store;
+use super::function::FUNCTION_STORE;
 use crate::azure::chatgpt::ChatGPT;
 use crate::gcloud::gemini::Gemini;
 use crate::llm::function::Function;
@@ -75,7 +75,7 @@ impl Config {
 
 fn load_functions(config: &ModelConfig) -> Result<Vec<Function>> {
     let mut declarations: Vec<Function> = vec![];
-    let mut function_store = function_store();
+    let mut function_store = FUNCTION_STORE.lock().unwrap();
     for function in &config.functions {
         info!("load function, name={function}");
         match function.as_str() {

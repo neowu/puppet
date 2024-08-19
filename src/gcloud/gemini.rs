@@ -26,14 +26,14 @@ use crate::gcloud::gemini_api::Candidate;
 use crate::gcloud::gemini_api::GenerateContentStreamResponse;
 use crate::gcloud::gemini_api::Role;
 use crate::gcloud::gemini_api::UsageMetadata;
-use crate::llm::function::function_store;
 use crate::llm::function::Function;
 use crate::llm::function::FunctionPayload;
+use crate::llm::function::FUNCTION_STORE;
 use crate::llm::ChatOption;
 use crate::llm::TextStream;
 use crate::llm::TokenUsage;
-use crate::util::http_client::http_client;
 use crate::util::http_client::ResponseExt;
+use crate::util::http_client::HTTP_CLIENT;
 use crate::util::json;
 use crate::util::path::PathExt;
 
@@ -143,7 +143,7 @@ async fn process(context: Arc<Mutex<Context>>, tx: mpsc::Sender<String>) -> Resu
         context.add_content(candidate.content);
 
         if !functions.is_empty() {
-            let results = function_store().call(functions)?;
+            let results = FUNCTION_STORE.lock().unwrap().call(functions)?;
             context.add_content(Content::new_function_response(results));
         } else {
             return Ok(());
@@ -168,7 +168,7 @@ async fn call_api(context: Arc<Mutex<Context>>) -> Result<Response> {
         };
 
         body = Bytes::from(json::to_json(&request)?);
-        http_request = http_client()
+        http_request = HTTP_CLIENT
             .post(&context.url)
             .bearer_auth(token())
             .header("Content-Type", "application/json")

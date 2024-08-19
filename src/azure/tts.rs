@@ -1,7 +1,7 @@
 use anyhow::anyhow;
 use anyhow::Result;
 
-use crate::util::http_client;
+use crate::util::http_client::HTTP_CLIENT;
 
 pub struct AzureTTS {
     pub endpoint: String,
@@ -20,7 +20,7 @@ impl AzureTTS {
             self.voice
         );
 
-        let response = http_client::http_client()
+        let response = HTTP_CLIENT
             .post(&self.endpoint)
             .header("Ocp-Apim-Subscription-Key", &self.api_key)
             .header("User-Agent", &self.resource)

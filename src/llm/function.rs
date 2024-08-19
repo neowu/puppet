@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::sync::LazyLock;
 use std::sync::Mutex;
-use std::sync::MutexGuard;
 
 use anyhow::anyhow;
 use anyhow::Context;
@@ -24,10 +23,7 @@ pub struct FunctionStore {
     implementations: HashMap<&'static str, Box<FunctionImplementation>>,
 }
 
-pub fn function_store<'a>() -> MutexGuard<'a, FunctionStore> {
-    static FUNCTION_STORE: LazyLock<Mutex<FunctionStore>> = LazyLock::new(|| Mutex::new(FunctionStore::new()));
-    FUNCTION_STORE.lock().unwrap()
-}
+pub static FUNCTION_STORE: LazyLock<Mutex<FunctionStore>> = LazyLock::new(|| Mutex::new(FunctionStore::new()));
 
 pub struct FunctionPayload {
     pub id: String,
