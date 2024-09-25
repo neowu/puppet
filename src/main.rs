@@ -3,7 +3,7 @@ use clap::Parser;
 use clap::Subcommand;
 use command::chat::Chat;
 use command::complete::Complete;
-use command::generate_zsh_completion::GenerateZshCompletion;
+use command::completion::Completion;
 use command::speak::Speak;
 
 mod azure;
@@ -31,8 +31,8 @@ pub enum Command {
     Speech(Speak),
     #[command(about = "complete prompt file")]
     Complete(Complete),
-    #[command(about = "generate zsh completion")]
-    GenerateZshCompletion(GenerateZshCompletion),
+    #[command(about = "generate shell completion")]
+    Completion(Completion),
 }
 
 #[tokio::main]
@@ -43,6 +43,6 @@ async fn main() -> Result<()> {
         Command::Chat(command) => command.execute().await,
         Command::Speech(command) => command.execute().await,
         Command::Complete(command) => command.execute().await,
-        Command::GenerateZshCompletion(command) => command.execute(),
+        Command::Completion(command) => command.execute(),
     }
 }

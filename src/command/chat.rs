@@ -11,6 +11,8 @@ use log::info;
 use tokio::io::stdin;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::BufReader;
+use tokio::io::Lines;
+use tokio::io::Stdin;
 
 use crate::llm;
 
@@ -45,13 +47,13 @@ impl Chat {
         loop {
             print!("> ");
             stdout().flush()?;
-            let Some(line) = lines.next_line().await? else {
-                break;
-            };
-            if line.starts_with("/quit") {
+
+            let input = read_input(&mut lines).await?;
+
+            if input.starts_with("/quit") {
                 break;
             }
-            if let Some(file) = line.strip_prefix("/file ") {
+            if let Some(file) = input.strip_prefix("/file ") {
                 let file = PathBuf::from(file);
                 if !file.exists() {
                     println!("file not exists, path: {}", file.to_string_lossy());
@@ -62,7 +64,7 @@ impl Chat {
             } else {
                 let files = mem::take(&mut files);
                 let files: Vec<&Path> = files.iter().map(|p| p.as_path()).collect();
-                model.add_user_message(line, &files)?;
+                model.add_user_message(input, &files)?;
 
                 let mut stream = model.generate().await?;
                 while let Some(text) = stream.next().await {
@@ -79,4 +81,20 @@ impl Chat {
 
         Ok(())
     }
+}
+
+async fn read_input(lines: &mut Lines<BufReader<Stdin>>) -> Result<String> {
+    let mut input = String::new();
+    let mut is_multiline = false;
+    while let Some(line) = lines.next_line().await? {
+        if line.contains("```") {
+            is_multiline = !is_multiline;
+        }
+        input.push_str(&line);
+        input.push('\n');
+        if !is_multiline {
+            break;
+        }
+    }
+    Ok(input)
 }
