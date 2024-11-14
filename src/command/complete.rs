@@ -19,6 +19,7 @@ use tokio::io::BufReader;
 
 use crate::llm;
 use crate::llm::ChatOption;
+use crate::openai::chat::Chat;
 use crate::util::path::PathExt;
 
 #[derive(Args)]
@@ -87,7 +88,7 @@ impl Complete {
         &self,
         state: &ParserState,
         line: &str,
-        model: &mut llm::Model,
+        model: &mut Chat,
         message: &mut String,
         files: &mut Vec<PathBuf>,
     ) -> Result<Option<ParserState>> {
@@ -149,7 +150,7 @@ impl Complete {
     }
 }
 
-async fn add_message(model: &mut llm::Model, state: &ParserState, message: String, files: Vec<PathBuf>) -> Result<()> {
+async fn add_message(model: &mut Chat, state: &ParserState, message: String, files: Vec<PathBuf>) -> Result<()> {
     match state {
         ParserState::System => {
             info!("set system message: {}", message);

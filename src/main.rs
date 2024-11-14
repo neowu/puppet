@@ -10,6 +10,7 @@ mod azure;
 mod command;
 mod gcloud;
 mod llm;
+mod openai;
 mod provider;
 mod tts;
 mod util;

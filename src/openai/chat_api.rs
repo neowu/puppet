@@ -7,6 +7,7 @@ use crate::llm::function::Function;
 
 #[derive(Debug, Serialize)]
 pub struct ChatRequest {
+    pub model: String,
     pub messages: Arc<Vec<ChatRequestMessage>>,
     pub temperature: f32,
     pub top_p: f32,

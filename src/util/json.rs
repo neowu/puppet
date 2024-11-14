@@ -19,6 +19,7 @@ where
     serde_json::to_string(object).with_context(|| format!("object={object:?}"))
 }
 
+#[allow(dead_code)]
 pub fn to_json_value<T>(enum_value: &T) -> Result<String>
 where
     T: Serialize + fmt::Debug,

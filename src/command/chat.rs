@@ -91,10 +91,10 @@ async fn read_input(lines: &mut Lines<BufReader<Stdin>>) -> Result<String> {
             is_multiline = !is_multiline;
         }
         input.push_str(&line);
-        input.push('\n');
         if !is_multiline {
             break;
         }
+        input.push('\n');
     }
     Ok(input)
 }

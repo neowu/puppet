@@ -9,12 +9,8 @@ use serde::Deserialize;
 use serde_json::json;
 
 use super::function::FUNCTION_STORE;
-use crate::azure::chatgpt::ChatGPT;
-use crate::gcloud::gemini::Gemini;
 use crate::llm::function::Function;
-use crate::llm::Model;
-use crate::provider::Provider;
-use crate::util::json;
+use crate::openai::chat::Chat;
 
 #[derive(Deserialize, Debug)]
 pub struct Config {
@@ -23,47 +19,22 @@ pub struct Config {
 
 #[derive(Deserialize, Debug)]
 pub struct ModelConfig {
-    pub endpoint: String,
-    pub provider: Provider,
+    pub url: String,
+    pub api_key: String,
+    pub model: String,
     pub system_message: Option<String>,
-    pub params: HashMap<String, String>,
     pub functions: Vec<String>,
 }
 
-impl ModelConfig {
-    fn param(&self, name: &str) -> Result<String> {
-        let value = self
-            .params
-            .get(name)
-            .with_context(|| format!("config param {} is required", name))?
-            .to_string();
-        Ok(value)
-    }
-}
-
 impl Config {
-    pub fn create(&self, name: &str) -> Result<Model> {
+    pub fn create(&self, name: &str) -> Result<Chat> {
         let config = self.models.get(name).with_context(|| format!("can not find model, name={name}"))?;
 
-        info!("create model, name={name}, provider={}", json::to_json_value(&config.provider)?);
+        info!("create model, name={name}");
 
         let functions = load_functions(config)?;
 
-        let mut model = match config.provider {
-            Provider::Azure => Model::ChatGPT(ChatGPT::new(
-                config.endpoint.to_string(),
-                config.param("model")?,
-                config.param("api_key")?,
-                functions,
-            )),
-            Provider::GCloud => Model::Gemini(Gemini::new(
-                config.endpoint.to_string(),
-                config.param("project")?,
-                config.param("location")?,
-                config.param("model")?,
-                functions,
-            )),
-        };
+        let mut model = Chat::new(config.url.to_string(), config.api_key.to_string(), config.model.to_string(), functions);
 
         if let Some(message) = config.system_message.as_ref() {
             model.system_message(message.to_string());

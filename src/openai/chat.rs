@@ -15,17 +15,18 @@ use log::info;
 use reqwest::Response;
 use tokio::sync::mpsc;
 
-use super::chatgpt_api::ChatCompletionChoice;
-use super::chatgpt_api::ChatResponse;
-use super::chatgpt_api::ChatResponseMessage;
-use super::chatgpt_api::FunctionCall;
-use super::chatgpt_api::ToolCall;
-use super::chatgpt_api::Usage;
-use crate::azure::chatgpt_api::ChatRequest;
-use crate::azure::chatgpt_api::ChatRequestMessage;
-use crate::azure::chatgpt_api::ChatStreamResponse;
-use crate::azure::chatgpt_api::Role;
-use crate::azure::chatgpt_api::Tool;
+use super::chat_api::ChatCompletionChoice;
+use super::chat_api::ChatRequest;
+use super::chat_api::ChatRequestMessage;
+use super::chat_api::ChatResponse;
+use super::chat_api::ChatResponseMessage;
+use super::chat_api::ChatStreamResponse;
+use super::chat_api::FunctionCall;
+use super::chat_api::Role;
+use super::chat_api::StreamOptions;
+use super::chat_api::Tool;
+use super::chat_api::ToolCall;
+use super::chat_api::Usage;
 use crate::llm::function::Function;
 use crate::llm::function::FunctionPayload;
 use crate::llm::function::FUNCTION_STORE;
@@ -37,12 +38,13 @@ use crate::util::http_client::HTTP_CLIENT;
 use crate::util::json;
 use crate::util::path::PathExt;
 
-pub struct ChatGPT {
+pub struct Chat {
     context: Arc<Mutex<Context>>,
 }
 
 struct Context {
     url: String,
+    model: String,
     api_key: String,
     messages: Arc<Vec<ChatRequestMessage>>,
     tools: Option<Arc<[Tool]>>,
@@ -50,9 +52,8 @@ struct Context {
     usage: TokenUsage,
 }
 
-impl ChatGPT {
-    pub fn new(endpoint: String, model: String, api_key: String, functions: Vec<Function>) -> Self {
-        let url = format!("{endpoint}/openai/deployments/{model}/chat/completions?api-version=2024-06-01");
+impl Chat {
+    pub fn new(url: String, api_key: String, model: String, functions: Vec<Function>) -> Self {
         let tools: Option<Arc<[Tool]>> = functions.is_empty().not().then_some(
             functions
                 .into_iter()
@@ -62,9 +63,10 @@ impl ChatGPT {
                 })
                 .collect(),
         );
-        ChatGPT {
+        Chat {
             context: Arc::from(Mutex::new(Context {
                 url,
+                model,
                 api_key,
                 messages: Arc::new(vec![]),
                 tools,
@@ -163,12 +165,12 @@ async fn call_api(context: Arc<Mutex<Context>>) -> Result<Response> {
     {
         let context = context.lock().unwrap();
         let request = ChatRequest {
+            model: context.model.clone(),
             messages: Arc::clone(&context.messages),
             temperature: context.option.as_ref().map_or(0.7, |option| option.temperature),
             top_p: 0.95,
             stream: true,
-            // stream_options: Some(StreamOptions { include_usage: true }),
-            stream_options: None,
+            stream_options: Some(StreamOptions { include_usage: true }),
             stop: None,
             max_tokens: 4096,
             presence_penalty: 0.0,
@@ -181,7 +183,8 @@ async fn call_api(context: Arc<Mutex<Context>>) -> Result<Response> {
         http_request = HTTP_CLIENT
             .post(&context.url)
             .header("Content-Type", "application/json")
-            .header("api-key", &context.api_key)
+            .header("api-key", context.api_key.clone()) // azure api use header
+            .bearer_auth(context.api_key.clone())
             .body(body.clone());
     }
     let response = http_request.send().await?;
@@ -280,6 +283,7 @@ fn base64_image_url(path: &Path) -> Result<String> {
     let mime_type = match extension {
         "jpg" => Ok("image/jpeg".to_string()),
         "png" => Ok("image/png".to_string()),
+        "pdf" => Ok("application/pdf".to_string()),
         _ => Err(anyhow!("not supported extension, path={}", path.to_string_lossy())),
     }?;
     Ok(format!("data:{mime_type};base64,{}", BASE64_STANDARD.encode(content)))
