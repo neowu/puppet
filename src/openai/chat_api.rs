@@ -3,8 +3,6 @@ use std::sync::Arc;
 use serde::Deserialize;
 use serde::Serialize;
 
-use crate::llm::function::Function;
-
 #[derive(Debug, Serialize)]
 pub struct ChatRequest {
     pub model: String,
@@ -118,6 +116,14 @@ impl ChatRequestMessage {
 pub struct Tool {
     pub r#type: &'static str,
     pub function: Function,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Function {
+    pub name: &'static str,
+    pub description: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parameters: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

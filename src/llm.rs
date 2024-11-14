@@ -15,12 +15,6 @@ use crate::util::json;
 pub mod config;
 pub mod function;
 
-#[derive(Default, Clone)]
-pub struct TokenUsage {
-    pub prompt_tokens: i32,
-    pub completion_tokens: i32,
-}
-
 #[derive(Debug)]
 pub struct ChatOption {
     pub temperature: f32,

@@ -1,5 +1,4 @@
 use std::fs;
-use std::ops::Not;
 use std::path::Path;
 use std::str;
 use std::sync::Arc;
@@ -27,12 +26,10 @@ use super::chat_api::StreamOptions;
 use super::chat_api::Tool;
 use super::chat_api::ToolCall;
 use super::chat_api::Usage;
-use crate::llm::function::Function;
 use crate::llm::function::FunctionPayload;
 use crate::llm::function::FUNCTION_STORE;
 use crate::llm::ChatOption;
 use crate::llm::TextStream;
-use crate::llm::TokenUsage;
 use crate::util::http_client::ResponseExt;
 use crate::util::http_client::HTTP_CLIENT;
 use crate::util::json;
@@ -49,20 +46,11 @@ struct Context {
     messages: Arc<Vec<ChatRequestMessage>>,
     tools: Option<Arc<[Tool]>>,
     option: Option<ChatOption>,
-    usage: TokenUsage,
+    usage: Arc<Usage>,
 }
 
 impl Chat {
-    pub fn new(url: String, api_key: String, model: String, functions: Vec<Function>) -> Self {
-        let tools: Option<Arc<[Tool]>> = functions.is_empty().not().then_some(
-            functions
-                .into_iter()
-                .map(|function| Tool {
-                    r#type: "function",
-                    function,
-                })
-                .collect(),
-        );
+    pub fn new(url: String, api_key: String, model: String, tools: Option<Arc<[Tool]>>) -> Self {
         Chat {
             context: Arc::from(Mutex::new(Context {
                 url,
@@ -71,7 +59,7 @@ impl Chat {
                 messages: Arc::new(vec![]),
                 tools,
                 option: None,
-                usage: TokenUsage::default(),
+                usage: Arc::new(Usage::default()),
             })),
         }
     }
@@ -114,7 +102,7 @@ impl Chat {
         self.context.lock().unwrap().option = Some(option);
     }
 
-    pub fn usage(&self) -> TokenUsage {
+    pub fn usage(&self) -> Arc<Usage> {
         self.context.lock().unwrap().usage.clone()
     }
 }
@@ -131,8 +119,7 @@ async fn process(context: Arc<Mutex<Context>>, tx: mpsc::Sender<String>) -> Resu
         let response = read_sse_response(http_response, &tx).await?;
 
         let mut context = context.lock().unwrap();
-        context.usage.prompt_tokens += response.usage.prompt_tokens;
-        context.usage.completion_tokens += response.usage.completion_tokens;
+        context.usage = Arc::new(response.usage);
 
         let message = response.choices.into_iter().next().unwrap().message;
 

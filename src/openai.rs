@@ -1,2 +1,2 @@
 pub mod chat;
-mod chat_api;
+pub mod chat_api;

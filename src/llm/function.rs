@@ -6,16 +6,6 @@ use anyhow::anyhow;
 use anyhow::Context;
 use anyhow::Result;
 use log::info;
-use serde::Serialize;
-
-// both openai and gemini shares same openai schema
-#[derive(Debug, Serialize)]
-pub struct Function {
-    pub name: &'static str,
-    pub description: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub parameters: Option<serde_json::Value>,
-}
 
 pub type FunctionImplementation = dyn Fn(&serde_json::Value) -> serde_json::Value + Send + Sync;
 

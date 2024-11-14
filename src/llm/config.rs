@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use anyhow::anyhow;
 use anyhow::Context;
@@ -9,8 +10,9 @@ use serde::Deserialize;
 use serde_json::json;
 
 use super::function::FUNCTION_STORE;
-use crate::llm::function::Function;
 use crate::openai::chat::Chat;
+use crate::openai::chat_api::Function;
+use crate::openai::chat_api::Tool;
 
 #[derive(Deserialize, Debug)]
 pub struct Config {
@@ -32,9 +34,10 @@ impl Config {
 
         info!("create model, name={name}");
 
-        let functions = load_functions(config)?;
+        let tools = load_functions(config)?;
+        let tools = if tools.is_empty() { None } else { Some(Arc::from(tools)) };
 
-        let mut model = Chat::new(config.url.to_string(), config.api_key.to_string(), config.model.to_string(), functions);
+        let mut model = Chat::new(config.url.to_string(), config.api_key.to_string(), config.model.to_string(), tools);
 
         if let Some(message) = config.system_message.as_ref() {
             model.system_message(message.to_string());
@@ -44,26 +47,29 @@ impl Config {
     }
 }
 
-fn load_functions(config: &ModelConfig) -> Result<Vec<Function>> {
-    let mut declarations: Vec<Function> = vec![];
+fn load_functions(config: &ModelConfig) -> Result<Vec<Tool>> {
+    let mut declarations: Vec<Tool> = vec![];
     let mut function_store = FUNCTION_STORE.lock().unwrap();
     for function in &config.functions {
         info!("load function, name={function}");
         match function.as_str() {
             "get_random_number" => {
-                declarations.push(Function {
-                    name: "get_random_number",
-                    description: "generate random number",
-                    parameters: Some(serde_json::json!({
-                        "type": "object",
-                        "properties": {
-                          "max": {
-                            "type": "number",
-                            "description": "max of value"
-                          },
-                        },
-                        "required": ["max"]
-                    })),
+                declarations.push(Tool {
+                    r#type: "function",
+                    function: Function {
+                        name: "get_random_number",
+                        description: "generate random number",
+                        parameters: Some(serde_json::json!({
+                            "type": "object",
+                            "properties": {
+                              "max": {
+                                "type": "number",
+                                "description": "max of value"
+                              },
+                            },
+                            "required": ["max"]
+                        })),
+                    },
                 });
                 function_store.add(
                     "get_random_number",
@@ -79,10 +85,13 @@ fn load_functions(config: &ModelConfig) -> Result<Vec<Function>> {
                 )
             }
             "close_door" => {
-                declarations.push(Function {
-                    name: "close_door",
-                    description: "close door of home",
-                    parameters: None,
+                declarations.push(Tool {
+                    r#type: "function",
+                    function: Function {
+                        name: "close_door",
+                        description: "close door of home",
+                        parameters: None,
+                    },
                 });
                 function_store.add(
                     "close_door",
