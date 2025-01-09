@@ -1,0 +1,19 @@
+[package]
+name = "framework"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tracing.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+reqwest.workspace = true
+axum.workspace = true
+
+futures.workspace = true
+bytes.workspace = true
+chrono.workspace = true
+uuid.workspace = true
