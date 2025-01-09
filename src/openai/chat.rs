@@ -1,18 +1,22 @@
 use std::fs;
 use std::path::Path;
+use std::pin::Pin;
 use std::str;
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::task::Poll;
 
 use anyhow::anyhow;
 use anyhow::Result;
 use base64::prelude::BASE64_STANDARD;
 use base64::Engine;
 use bytes::Bytes;
+use futures::Stream;
 use futures::StreamExt;
 use log::info;
 use reqwest::Response;
 use tokio::sync::mpsc;
+use tokio::sync::mpsc::Receiver;
 
 use super::chat_api::ChatCompletionChoice;
 use super::chat_api::ChatRequest;
@@ -28,8 +32,6 @@ use super::chat_api::ToolCall;
 use super::chat_api::Usage;
 use crate::llm::function::FunctionPayload;
 use crate::llm::function::FUNCTION_STORE;
-use crate::llm::ChatOption;
-use crate::llm::TextStream;
 use crate::util::http_client::ResponseExt;
 use crate::util::http_client::HTTP_CLIENT;
 use crate::util::json;
@@ -37,6 +39,11 @@ use crate::util::path::PathExt;
 
 pub struct Chat {
     context: Arc<Mutex<Context>>,
+}
+
+#[derive(Debug)]
+pub struct ChatOption {
+    pub temperature: f32,
 }
 
 struct Context {
@@ -47,6 +54,24 @@ struct Context {
     tools: Option<Arc<[Tool]>>,
     option: Option<ChatOption>,
     usage: Arc<Usage>,
+}
+
+pub struct TextStream {
+    rx: Receiver<String>,
+}
+
+impl TextStream {
+    pub fn new(rx: Receiver<String>) -> Self {
+        TextStream { rx }
+    }
+}
+
+impl Stream for TextStream {
+    type Item = String;
+
+    fn poll_next(mut self: Pin<&mut Self>, context: &mut std::task::Context<'_>) -> Poll<Option<Self::Item>> {
+        self.rx.poll_recv(context)
+    }
 }
 
 impl Chat {

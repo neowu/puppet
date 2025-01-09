@@ -18,8 +18,8 @@ use tokio::io::AsyncWriteExt;
 use tokio::io::BufReader;
 
 use crate::llm;
-use crate::llm::ChatOption;
 use crate::openai::chat::Chat;
+use crate::openai::chat::ChatOption;
 use crate::util::path::PathExt;
 
 #[derive(Args)]

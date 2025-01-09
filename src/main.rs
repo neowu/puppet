@@ -4,15 +4,10 @@ use clap::Subcommand;
 use command::chat::Chat;
 use command::complete::Complete;
 use command::completion::Completion;
-use command::speak::Speak;
 
-mod azure;
 mod command;
-mod gcloud;
 mod llm;
 mod openai;
-mod provider;
-mod tts;
 mod util;
 
 #[derive(Parser)]
@@ -28,8 +23,6 @@ pub struct Cli {
 pub enum Command {
     #[command(about = "interactive chat")]
     Chat(Chat),
-    #[command(about = "speak")]
-    Speech(Speak),
     #[command(about = "complete prompt file")]
     Complete(Complete),
     #[command(about = "generate shell completion")]
@@ -42,7 +35,6 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Chat(command) => command.execute().await,
-        Command::Speech(command) => command.execute().await,
         Command::Complete(command) => command.execute().await,
         Command::Completion(command) => command.execute(),
     }
