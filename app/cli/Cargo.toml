@@ -4,6 +4,19 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-tokio.workspace = true
-
 framework.workspace = true
+openai.workspace = true
+
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+clap.workspace = true
+clap_complete.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+futures.workspace = true
+
+rand = "*"
+regex = "*"
+glob = "*"

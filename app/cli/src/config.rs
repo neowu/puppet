@@ -1,18 +1,29 @@
 use std::collections::HashMap;
+use std::fs;
+use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::anyhow;
 use anyhow::Context;
 use anyhow::Result;
-use log::info;
+use framework::json;
+use openai::chat::Chat;
+use openai::chat_api::Function;
+use openai::chat_api::Tool;
+use openai::function::FUNCTION_STORE;
 use rand::Rng;
 use serde::Deserialize;
 use serde_json::json;
+use tracing::info;
 
-use super::function::FUNCTION_STORE;
-use crate::openai::chat::Chat;
-use crate::openai::chat_api::Function;
-use crate::openai::chat_api::Tool;
+pub fn load(path: Option<&Path>) -> Result<Config> {
+    let default_config_path = format!("{}/.config/puppet/llm.json", env!("HOME"));
+    let path = path.unwrap_or(Path::new(&default_config_path));
+    info!("load config, path={}", path.to_string_lossy());
+    let content = fs::read_to_string(path)?;
+    let config: Config = json::from_json(&content)?;
+    Ok(config)
+}
 
 #[derive(Deserialize, Debug)]
 pub struct Config {

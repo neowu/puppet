@@ -7,14 +7,14 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::Args;
 use futures::StreamExt;
-use log::info;
 use tokio::io::stdin;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::BufReader;
 use tokio::io::Lines;
 use tokio::io::Stdin;
+use tracing::info;
 
-use crate::llm;
+use crate::config;
 
 #[derive(Args)]
 pub struct Chat {
@@ -27,7 +27,7 @@ pub struct Chat {
 
 impl Chat {
     pub async fn execute(&self) -> Result<()> {
-        let config = llm::load(self.conf.as_deref())?;
+        let config = config::load(self.conf.as_deref())?;
         let mut model = config.create(&self.model)?;
 
         println!(

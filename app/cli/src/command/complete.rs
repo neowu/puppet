@@ -8,19 +8,19 @@ use std::str::FromStr;
 use anyhow::anyhow;
 use anyhow::Result;
 use clap::Args;
+use framework::fs::path::PathExt;
 use futures::StreamExt;
 use glob::glob;
-use log::info;
+use openai::chat::Chat;
+use openai::chat::ChatOption;
 use regex::Regex;
 use tokio::fs;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::io::BufReader;
+use tracing::info;
 
-use crate::llm;
-use crate::openai::chat::Chat;
-use crate::openai::chat::ChatOption;
-use crate::util::path::PathExt;
+use crate::config;
 
 #[derive(Args)]
 pub struct Complete {
@@ -42,7 +42,7 @@ enum ParserState {
 
 impl Complete {
     pub async fn execute(&self) -> Result<()> {
-        let config = llm::load(self.conf.as_deref())?;
+        let config = config::load(self.conf.as_deref())?;
         let mut model = config.create(&self.model)?;
 
         let prompt = fs::OpenOptions::new().read(true).open(&self.prompt).await?;
