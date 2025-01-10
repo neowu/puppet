@@ -170,7 +170,6 @@ pub struct StreamFunctionCall {
     pub arguments: String,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Default, Deserialize)]
 pub struct Usage {
     pub prompt_tokens: i32,

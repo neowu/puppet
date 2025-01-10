@@ -15,6 +15,7 @@ use framework::fs::path::PathExt;
 use framework::http_client::ResponseExt;
 use framework::http_client::HTTP_CLIENT;
 use framework::json;
+use framework::json::from_json;
 use futures::Stream;
 use futures::StreamExt;
 use reqwest::Response;
@@ -46,6 +47,7 @@ pub struct ChatOption {
     pub temperature: f32,
 }
 
+#[derive(Debug)]
 struct Context {
     url: String,
     model: String,
@@ -89,10 +91,33 @@ impl Chat {
         }
     }
 
-    pub async fn generate(&self) -> Result<TextStream> {
+    pub async fn generate(&self) -> Result<String> {
+        let context = Arc::clone(&self.context);
+        loop {
+            let http_response = call_api(Arc::clone(&context), false).await?;
+            let response: ChatResponse = from_json(&http_response.text().await?)?;
+
+            let result = process_chat_response(response, Arc::clone(&context)).unwrap();
+            if let Some(content) = result {
+                return Ok(content);
+            }
+        }
+    }
+
+    pub async fn generate_stream(&self) -> Result<TextStream> {
         let (tx, rx) = mpsc::channel(64);
         let context = Arc::clone(&self.context);
-        tokio::spawn(async move { process(context, tx).await.unwrap() });
+        tokio::spawn(async move {
+            loop {
+                let http_response = call_api(Arc::clone(&context), true).await.unwrap();
+                let response = read_sse_response(http_response, &tx).await.unwrap();
+
+                let result = process_chat_response(response, Arc::clone(&context)).unwrap();
+                if result.is_some() {
+                    break;
+                }
+            }
+        });
         Ok(TextStream::new(rx))
     }
 
@@ -138,40 +163,37 @@ impl Context {
     }
 }
 
-async fn process(context: Arc<Mutex<Context>>, tx: mpsc::Sender<String>) -> Result<()> {
-    loop {
-        let http_response = call_api(Arc::clone(&context)).await?;
-        let response = read_sse_response(http_response, &tx).await?;
+// call function if needed, or return generated content
+fn process_chat_response(response: ChatResponse, context: Arc<Mutex<Context>>) -> Result<Option<String>> {
+    let mut context = context.lock().unwrap();
+    context.usage = Arc::new(response.usage);
 
-        let mut context = context.lock().unwrap();
-        context.usage = Arc::new(response.usage);
-
-        let message = response.choices.into_iter().next().unwrap().message;
-
-        if let Some(calls) = message.tool_calls {
-            let mut functions = Vec::with_capacity(calls.len());
-            for call in calls.iter() {
-                functions.push(FunctionPayload {
-                    id: call.id.to_string(),
-                    name: call.function.name.to_string(),
-                    value: json::from_json::<serde_json::Value>(&call.function.arguments)?,
-                })
-            }
-
-            context.add_message(ChatRequestMessage::new_function_call(calls));
-            let results = FUNCTION_STORE.lock().unwrap().call(functions)?;
-
-            for result in results {
-                context.add_message(ChatRequestMessage::new_function_response(result.id, json::to_json(&result.value)?));
-            }
-        } else {
-            context.add_message(ChatRequestMessage::new_message(Role::Assistant, message.content.unwrap()));
-            return Ok(());
+    let message = response.choices.into_iter().next().unwrap();
+    if let Some(calls) = message.message.tool_calls {
+        let mut functions = Vec::with_capacity(calls.len());
+        for call in calls.iter() {
+            functions.push(FunctionPayload {
+                id: call.id.to_string(),
+                name: call.function.name.to_string(),
+                value: json::from_json(&call.function.arguments)?,
+            })
         }
+
+        context.add_message(ChatRequestMessage::new_function_call(calls));
+        let results = FUNCTION_STORE.lock().unwrap().call(functions)?;
+
+        for result in results {
+            context.add_message(ChatRequestMessage::new_function_response(result.id, json::to_json(&result.value)?));
+        }
+        Ok(None)
+    } else {
+        let content = message.message.content.clone().unwrap();
+        context.add_message(ChatRequestMessage::new_message(Role::Assistant, content.clone()));
+        Ok(Some(content))
     }
 }
 
-async fn call_api(context: Arc<Mutex<Context>>) -> Result<Response> {
+async fn call_api(context: Arc<Mutex<Context>>, stream: bool) -> Result<Response> {
     let http_request;
     let body;
     {
@@ -181,8 +203,8 @@ async fn call_api(context: Arc<Mutex<Context>>) -> Result<Response> {
             messages: Arc::clone(&context.messages),
             temperature: context.option.as_ref().map_or(0.7, |option| option.temperature),
             top_p: 0.95,
-            stream: true,
-            stream_options: Some(StreamOptions { include_usage: true }),
+            stream,
+            stream_options: stream.then_some(StreamOptions { include_usage: true }),
             stop: None,
             max_tokens: 4096,
             presence_penalty: 0.0,

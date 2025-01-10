@@ -29,7 +29,7 @@ async fn main() -> Result<()> {
 
     let app = Router::new();
 
-    framework::web::start_http_server(app).await;
+    framework::web::start_http_server(app).await?;
     framework::task::shutdown().await;
 
     Ok(())

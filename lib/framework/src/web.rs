@@ -19,16 +19,18 @@ use tracing::trace;
 use tracing::Instrument;
 use uuid::Uuid;
 
-pub async fn start_http_server(router: Router) {
+pub async fn start_http_server(router: Router) -> anyhow::Result<()> {
     let app = Router::new();
     let app = app.route("/health-check", get(health_check));
     let app = app.merge(router);
     let app = app.layer(middleware::from_fn(trace_layer));
 
-    let listener = TcpListener::bind("127.0.0.1:3000").await.unwrap();
+    let listener = TcpListener::bind("127.0.0.1:3000").await?;
     info!("http server stated");
-    axum::serve(listener, app).with_graceful_shutdown(shutdown_signal()).await.unwrap();
+    axum::serve(listener, app).with_graceful_shutdown(shutdown_signal()).await?;
     info!("http server stopped");
+
+    Ok(())
 }
 
 async fn shutdown_signal() {

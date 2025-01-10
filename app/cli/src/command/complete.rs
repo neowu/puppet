@@ -68,7 +68,7 @@ impl Complete {
             return Err(anyhow!("last message must be user message".to_string()));
         }
 
-        let mut stream = model.generate().await?;
+        let mut stream = model.generate_stream().await?;
         let mut prompt = fs::OpenOptions::new().append(true).open(&self.prompt).await?;
         prompt.write_all(format!("\n# assistant ({})\n\n", self.model).as_bytes()).await?;
         while let Some(text) = stream.next().await {

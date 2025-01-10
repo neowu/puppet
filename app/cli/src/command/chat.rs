@@ -66,7 +66,7 @@ impl Chat {
                 let files: Vec<&Path> = files.iter().map(|p| p.as_path()).collect();
                 model.add_user_message(input, &files)?;
 
-                let mut stream = model.generate().await?;
+                let mut stream = model.generate_stream().await?;
                 while let Some(text) = stream.next().await {
                     print!("{text}");
                     stdout().flush()?;
