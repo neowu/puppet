@@ -17,3 +17,6 @@ tokio.workspace = true
 futures.workspace = true
 
 axum.workspace = true
+chrono.workspace = true
+
+duckdb = { version = "*", features = ["bundled", "chrono"] }
