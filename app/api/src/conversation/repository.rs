@@ -33,8 +33,14 @@ pub struct Conversation {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Message {
-    pub role: String,
+    pub role: Role,
     pub message: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub enum Role {
+    Assistant,
+    User,
 }
 
 pub fn create_conversation(conn: Arc<Mutex<Connection>>) -> Result<Conversation> {
@@ -84,13 +90,8 @@ fn conversation_row_map(row: &Row<'_>) -> duckdb::Result<Conversation> {
 pub fn save_conversation(conn: Arc<Mutex<Connection>>, conversation: Conversation) -> Result<()> {
     let conn = conn.lock().unwrap();
     conn.execute(
-        "INSERT INTO conversation (id, summary, messages, created_time) VALUES (?, ?, ?, ?)",
-        params![
-            conversation.id,
-            conversation.summary,
-            to_json(&conversation.messages)?,
-            conversation.created_time
-        ],
+        "UPDATE conversation SET summary = ?, messages = ? WHERE id = ?",
+        params![conversation.summary, to_json(&conversation.messages)?, conversation.id,],
     )?;
     Ok(())
 }

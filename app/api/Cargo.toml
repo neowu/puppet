@@ -20,3 +20,4 @@ axum.workspace = true
 chrono.workspace = true
 
 duckdb = { version = "*", features = ["bundled", "chrono"] }
+tokio-stream = { version = "*" }

@@ -1,14 +1,24 @@
+use std::time::Duration;
+
+use anyhow::Result;
 use axum::debug_handler;
 use axum::extract::Path;
 use axum::extract::State;
+use axum::response::sse::Event;
+use axum::response::sse::KeepAlive;
+use axum::response::Sse;
 use axum::routing::get;
 use axum::routing::post;
 use axum::Json;
 use axum::Router;
 use chrono::DateTime;
 use chrono::Utc;
+use framework::task;
+use futures::Stream;
+use serde::Deserialize;
 use serde::Serialize;
-use tracing::trace;
+use tokio::sync::mpsc;
+use tokio_stream::wrappers::ReceiverStream;
 
 use super::repository;
 use super::repository::Conversation;
@@ -21,7 +31,7 @@ pub fn routes() -> Router<ApiState> {
         .route("/conversation", get(list_conversations))
         .route("/conversation", post(start_conversation))
         .route("/conversation/{id}", get(get_conversation))
-        .route("/test", get(test))
+        .route("/conversation/{id}/chat", post(chat))
 }
 
 #[derive(Serialize, Debug)]
@@ -29,6 +39,19 @@ struct ConversationView {
     id: u32,
     summary: String,
     created_time: DateTime<Utc>,
+}
+
+#[derive(Serialize, Debug)]
+struct ConversationDetailView {
+    id: u32,
+    summary: String,
+    messages: Vec<Message>,
+    created_time: DateTime<Utc>,
+}
+
+#[derive(Deserialize, Debug)]
+struct ChatRequest {
+    message: String,
 }
 
 #[debug_handler]
@@ -51,57 +74,34 @@ fn conversation_view(conversation: Conversation) -> ConversationView {
     }
 }
 
-#[derive(Serialize, Debug)]
-enum RoleView {
-    Assistant,
-    User,
-}
-
-#[derive(Serialize, Debug)]
-struct ConversationDetailView {
-    id: u32,
-    summary: String,
-    messages: Vec<(RoleView, String)>,
-    created_time: DateTime<Utc>,
-}
-
 #[debug_handler]
 async fn get_conversation(Path(id): Path<u32>, State(ApiState { db }): State<ApiState>) -> Result<Json<ConversationDetailView>, ApiError> {
     let conversation = repository::get_conversation(db, id)?;
-    trace!("conversation={:?}", conversation);
     let json = Json(ConversationDetailView {
         id: conversation.id,
         summary: conversation.summary,
-        messages: conversation
-            .messages
-            .into_iter()
-            .map(|Message { role, message }| match role.as_str() {
-                "assistant" => (RoleView::Assistant, message),
-                _ => (RoleView::User, message),
-            })
-            .collect(),
+        messages: conversation.messages,
         created_time: conversation.created_time,
     });
     Ok(json)
 }
 
 #[debug_handler]
-async fn test(State(ApiState { db }): State<ApiState>) -> Result<(), ApiError> {
-    let conversation = repository::Conversation {
-        id: 10000,
-        summary: "test conv".to_string(),
-        messages: vec![
-            Message {
-                role: "user".to_string(),
-                message: "hello".to_string(),
-            },
-            Message {
-                role: "assistant".to_string(),
-                message: "how can i help you".to_string(),
-            },
-        ],
-        created_time: Utc::now(),
-    };
-    repository::save_conversation(db, conversation)?;
-    Ok(())
+async fn chat(
+    Path(id): Path<u32>,
+    State(ApiState { db }): State<ApiState>,
+    Json(request): Json<ChatRequest>,
+) -> Sse<impl Stream<Item = Result<Event>>> {
+    let (tx, rx) = mpsc::channel(64);
+
+    task::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(1));
+        loop {
+            interval.tick().await;
+            tx.send(Ok(Event::default().data("hello"))).await.unwrap();
+        }
+    });
+
+    let stream = ReceiverStream::new(rx);
+    Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(1)))
 }
