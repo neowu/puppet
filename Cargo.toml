@@ -17,8 +17,9 @@ serde = { version = "*", features = ["derive", "rc"] }
 serde_json = "*"
 tokio = { version = "*", features = ["full"] }
 tokio-util = { version = "*", features = ["rt"] }
+tokio-stream = { version = "*" }
 axum = { version = "*", features = ["macros"] }
-reqwest = { version = "*", features = ["stream"] }
+reqwest = { version = "*", features = ["stream", "socks"] }
 
 futures = "*"
 bytes = "*"

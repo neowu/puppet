@@ -13,6 +13,7 @@ use futures::StreamExt;
 use glob::glob;
 use openai::chat::Chat;
 use openai::chat::ChatOption;
+use openai::chat_api::ResponseFormat;
 use regex::Regex;
 use tokio::fs;
 use tokio::io::AsyncBufReadExt;
@@ -70,7 +71,9 @@ impl Complete {
 
         let mut stream = model.generate_stream().await?;
         let mut prompt = fs::OpenOptions::new().append(true).open(&self.prompt).await?;
-        prompt.write_all(format!("\n# assistant ({})\n\n", self.model).as_bytes()).await?;
+        prompt
+            .write_all(format!("\n# assistant ({})\n\n", self.model).as_bytes())
+            .await?;
         while let Some(text) = stream.next().await {
             print!("{text}");
             stdout().flush()?;
@@ -122,7 +125,11 @@ impl Complete {
                         message.push_str(&fs::read_to_string(path).await?);
                     }
                     "java" | "rs" => {
-                        message.push_str(&format!("```{} (path: {})\n", language(extension)?, path.to_string_lossy()));
+                        message.push_str(&format!(
+                            "```{} (path: {})\n",
+                            language(extension)?,
+                            path.to_string_lossy()
+                        ));
                         message.push_str(&fs::read_to_string(path).await?);
                         message.push_str("```\n");
                     }
@@ -142,7 +149,11 @@ impl Complete {
         if !pattern.starts_with('/') {
             return Ok(format!(
                 "{}/{}",
-                fs::canonicalize(&self.prompt).await?.parent().unwrap().to_string_lossy(),
+                fs::canonicalize(&self.prompt)
+                    .await?
+                    .parent()
+                    .unwrap()
+                    .to_string_lossy(),
                 pattern
             ));
         }
@@ -176,7 +187,10 @@ fn parse_option(line: &str) -> Result<Option<ChatOption>> {
     let regex = Regex::new(r".*temperature=(\d+\.\d+).*")?;
     if let Some(capture) = regex.captures(line) {
         let temperature = f32::from_str(&capture[1])?;
-        Ok(Some(ChatOption { temperature }))
+        Ok(Some(ChatOption {
+            temperature,
+            response_format: ResponseFormat::text(),
+        }))
     } else {
         Ok(None)
     }

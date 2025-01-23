@@ -21,6 +21,8 @@ pub struct ChatRequest {
     pub tool_choice: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<Arc<[Tool]>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_format: Option<ResponseFormat>,
 }
 
 #[derive(Debug, Serialize)]
@@ -51,6 +53,46 @@ pub struct ImageUrl {
 #[derive(Debug, Serialize)]
 pub struct StreamOptions {
     pub include_usage: bool,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct ResponseFormat {
+    pub r#type: ResponseType,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub json_schema: Option<serde_json::Value>,
+}
+
+impl ResponseFormat {
+    pub fn text() -> Self {
+        ResponseFormat {
+            r#type: ResponseType::Text,
+            json_schema: None,
+        }
+    }
+
+    pub fn json() -> Self {
+        ResponseFormat {
+            r#type: ResponseType::JsonObject,
+            json_schema: None,
+        }
+    }
+
+    pub fn json_schema(schema: serde_json::Value) -> Self {
+        ResponseFormat {
+            r#type: ResponseType::JsonSchema,
+            json_schema: Some(schema),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub enum ResponseType {
+    #[serde(rename = "text")]
+    Text,
+    #[serde(rename = "json_object")]
+    JsonObject,
+    #[serde(rename = "json_schema")]
+    JsonSchema,
 }
 
 impl ChatRequestMessage {
@@ -170,11 +212,19 @@ pub struct StreamFunctionCall {
     pub arguments: String,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Clone)]
 pub struct Usage {
     pub prompt_tokens: i32,
     pub completion_tokens: i32,
     pub total_tokens: i32,
+}
+
+impl Usage {
+    pub fn merge(&mut self, other: &Usage) {
+        self.prompt_tokens += other.prompt_tokens;
+        self.completion_tokens += other.completion_tokens;
+        self.total_tokens += other.total_tokens;
+    }
 }
 
 #[derive(Debug, Deserialize)]

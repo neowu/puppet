@@ -1,10 +1,8 @@
 use std::fs;
 use std::path::Path;
-use std::pin::Pin;
 use std::str;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::task::Poll;
 
 use anyhow::anyhow;
 use anyhow::Result;
@@ -20,7 +18,7 @@ use futures::Stream;
 use futures::StreamExt;
 use reqwest::Response;
 use tokio::sync::mpsc;
-use tokio::sync::mpsc::Receiver;
+use tokio_stream::wrappers::ReceiverStream;
 use tracing::info;
 
 use crate::chat_api::ChatCompletionChoice;
@@ -30,6 +28,7 @@ use crate::chat_api::ChatResponse;
 use crate::chat_api::ChatResponseMessage;
 use crate::chat_api::ChatStreamResponse;
 use crate::chat_api::FunctionCall;
+use crate::chat_api::ResponseFormat;
 use crate::chat_api::Role;
 use crate::chat_api::StreamOptions;
 use crate::chat_api::Tool;
@@ -45,6 +44,7 @@ pub struct Chat {
 #[derive(Debug)]
 pub struct ChatOption {
     pub temperature: f32,
+    pub response_format: ResponseFormat,
 }
 
 #[derive(Debug)]
@@ -55,25 +55,7 @@ struct Context {
     messages: Arc<Vec<ChatRequestMessage>>,
     tools: Option<Arc<[Tool]>>,
     option: Option<ChatOption>,
-    usage: Arc<Usage>,
-}
-
-pub struct TextStream {
-    rx: Receiver<String>,
-}
-
-impl TextStream {
-    pub fn new(rx: Receiver<String>) -> Self {
-        TextStream { rx }
-    }
-}
-
-impl Stream for TextStream {
-    type Item = String;
-
-    fn poll_next(mut self: Pin<&mut Self>, context: &mut std::task::Context<'_>) -> Poll<Option<Self::Item>> {
-        self.rx.poll_recv(context)
-    }
+    usage: Usage,
 }
 
 impl Chat {
@@ -86,7 +68,7 @@ impl Chat {
                 messages: Arc::new(vec![]),
                 tools,
                 option: None,
-                usage: Arc::new(Usage::default()),
+                usage: Usage::default(),
             })),
         }
     }
@@ -104,7 +86,7 @@ impl Chat {
         }
     }
 
-    pub async fn generate_stream(&self) -> Result<TextStream> {
+    pub async fn generate_stream(&self) -> Result<impl Stream<Item = String>> {
         let (tx, rx) = mpsc::channel(64);
         let context = Arc::clone(&self.context);
         tokio::spawn(async move {
@@ -118,7 +100,7 @@ impl Chat {
                 }
             }
         });
-        Ok(TextStream::new(rx))
+        Ok(ReceiverStream::new(rx))
     }
 
     pub fn system_message(&mut self, message: String) {
@@ -152,7 +134,7 @@ impl Chat {
         self.context.lock().unwrap().option = Some(option);
     }
 
-    pub fn usage(&self) -> Arc<Usage> {
+    pub fn usage(&self) -> Usage {
         self.context.lock().unwrap().usage.clone()
     }
 }
@@ -166,7 +148,7 @@ impl Context {
 // call function if needed, or return generated content
 fn process_chat_response(response: ChatResponse, context: Arc<Mutex<Context>>) -> Result<Option<String>> {
     let mut context = context.lock().unwrap();
-    context.usage = Arc::new(response.usage);
+    context.usage.merge(&response.usage);
 
     let message = response.choices.into_iter().next().unwrap();
     if let Some(calls) = message.message.tool_calls {
@@ -183,7 +165,10 @@ fn process_chat_response(response: ChatResponse, context: Arc<Mutex<Context>>) -
         let results = FUNCTION_STORE.lock().unwrap().call(functions)?;
 
         for result in results {
-            context.add_message(ChatRequestMessage::new_function_response(result.id, json::to_json(&result.value)?));
+            context.add_message(ChatRequestMessage::new_function_response(
+                result.id,
+                json::to_json(&result.value)?,
+            ));
         }
         Ok(None)
     } else {
@@ -211,6 +196,7 @@ async fn call_api(context: Arc<Mutex<Context>>, stream: bool) -> Result<Response
             frequency_penalty: 0.0,
             tool_choice: context.tools.is_some().then_some("auto".to_string()),
             tools: context.tools.clone(),
+            response_format: context.option.as_ref().map(|option| option.response_format.clone()),
         };
 
         body = Bytes::from(json::to_json(&request)?);
@@ -227,7 +213,9 @@ async fn call_api(context: Arc<Mutex<Context>>, stream: bool) -> Result<Response
         let body = str::from_utf8(&body)?;
         info!("body={}", body);
         let response_text = response.text().await?;
-        return Err(anyhow!("failed to call azure api, status={status}, response={response_text}"));
+        return Err(anyhow!(
+            "failed to call azure api, status={status}, response={response_text}"
+        ));
     }
 
     Ok(response)
@@ -279,7 +267,13 @@ async fn read_sse_response(http_response: Response, tx: &mpsc::Sender<String>) -
                             },
                         });
                     }
-                    let tool_call = choice.message.tool_calls.as_mut().unwrap().get_mut(stream_call.index as usize).unwrap();
+                    let tool_call = choice
+                        .message
+                        .tool_calls
+                        .as_mut()
+                        .unwrap()
+                        .get_mut(stream_call.index as usize)
+                        .unwrap();
                     tool_call.function.arguments.push_str(&stream_call.function.arguments);
                 } else if let Some(content) = stream_choice.delta.content {
                     choice.append_content(&content);
