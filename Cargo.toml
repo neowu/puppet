@@ -5,6 +5,7 @@ members = [ "app/*", "lib/*" ]
 [workspace.dependencies]
 framework = { path = "lib/framework" }
 openai = { path = "lib/openai" }
+agent = { path = "lib/agent" }
 
 tracing = "*"
 tracing-subscriber = "*"
@@ -13,7 +14,7 @@ anyhow = "*"
 clap = { version = "*", features = ["derive"] }
 clap_complete = "*"
 
-serde = { version = "*", features = ["derive", "rc"] }
+serde = { version = "*", features = ["derive"] }
 serde_json = "*"
 tokio = { version = "*", features = ["full"] }
 tokio-util = { version = "*", features = ["rt"] }

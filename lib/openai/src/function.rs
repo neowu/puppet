@@ -1,19 +1,21 @@
 use std::collections::HashMap;
-use std::sync::LazyLock;
-use std::sync::Mutex;
+use std::sync::Arc;
 
 use anyhow::anyhow;
 use anyhow::Context;
 use anyhow::Result;
 use tracing::info;
 
+use crate::chat_api::Function;
+use crate::chat_api::Tool;
+
 pub type FunctionImplementation = dyn Fn(&serde_json::Value) -> serde_json::Value + Send + Sync;
 
+#[derive(Default)]
 pub struct FunctionStore {
-    implementations: HashMap<&'static str, Box<FunctionImplementation>>,
+    implementations: HashMap<String, Arc<FunctionImplementation>>,
+    definitions: Vec<Tool>,
 }
-
-pub static FUNCTION_STORE: LazyLock<Mutex<FunctionStore>> = LazyLock::new(|| Mutex::new(FunctionStore::new()));
 
 pub struct FunctionPayload {
     pub id: String,
@@ -22,20 +24,25 @@ pub struct FunctionPayload {
 }
 
 impl FunctionStore {
-    fn new() -> Self {
-        FunctionStore {
-            implementations: HashMap::new(),
-        }
+    pub fn add(&mut self, function: Function, implementation: Arc<FunctionImplementation>) {
+        self.implementations.insert(function.name.to_string(), implementation);
+        self.definitions.push(Tool {
+            r#type: "function",
+            function,
+        });
     }
 
-    pub fn add(&mut self, name: &'static str, implementation: Box<FunctionImplementation>) {
-        self.implementations.insert(name, implementation);
+    pub fn definitions(&self) -> Option<Vec<Tool>> {
+        self.definitions.is_empty().then(|| self.definitions.clone())
     }
 
     pub fn call(&self, functions: Vec<FunctionPayload>) -> Result<Vec<FunctionPayload>> {
         let mut results = vec![];
         for function in functions {
-            info!("call function, id={}, name={}, args={}", function.id, function.name, function.value);
+            info!(
+                "call function, id={}, name={}, args={}",
+                function.id, function.name, function.value
+            );
             let implementation = self
                 .implementations
                 .get(function.name.as_str())

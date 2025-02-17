@@ -1,12 +1,10 @@
-use std::sync::Arc;
-
 use serde::Deserialize;
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
 pub struct ChatRequest {
     pub model: String,
-    pub messages: Arc<Vec<ChatRequestMessage>>,
+    pub messages: Vec<ChatRequestMessage>,
     pub temperature: f32,
     pub top_p: f32,
     pub stream: bool,
@@ -18,14 +16,16 @@ pub struct ChatRequest {
     pub presence_penalty: f32,
     pub frequency_penalty: f32,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_choice: Option<String>,
+    pub tool_choice: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tools: Option<Arc<[Tool]>>,
+    pub tools: Option<Vec<Tool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_format: Option<ResponseFormat>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prediction: Option<Prediction>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct ChatRequestMessage {
     pub role: Role,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -36,7 +36,7 @@ pub struct ChatRequestMessage {
     pub tool_calls: Option<Vec<ToolCall>>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct Content {
     pub r#type: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -45,7 +45,7 @@ pub struct Content {
     pub image_url: Option<ImageUrl>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct ImageUrl {
     pub url: String,
 }
@@ -154,13 +154,13 @@ impl ChatRequestMessage {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct Tool {
     pub r#type: &'static str,
     pub function: Function,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 pub struct Function {
     pub name: &'static str,
     pub description: &'static str,
@@ -168,7 +168,13 @@ pub struct Function {
     pub parameters: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize)]
+pub struct Prediction {
+    pub r#type: &'static str,
+    pub content: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum Role {
     #[serde(rename = "user")]
     User,
@@ -257,14 +263,14 @@ pub struct ChatResponseMessage {
     pub tool_calls: Option<Vec<ToolCall>>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ToolCall {
     pub id: String,
     pub r#type: String,
     pub function: FunctionCall,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FunctionCall {
     pub name: String,
     pub arguments: String,
