@@ -5,15 +5,14 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::str::FromStr;
 
+use ::agent::agent::Agent;
 use anyhow::anyhow;
 use anyhow::Result;
 use clap::Args;
 use framework::fs::path::PathExt;
 use futures::StreamExt;
 use glob::glob;
-use openai::chat::Chat;
 use openai::chat::ChatOption;
-use openai::chat_api::ResponseFormat;
 use regex::Regex;
 use tokio::fs;
 use tokio::io::AsyncBufReadExt;
@@ -21,7 +20,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::io::BufReader;
 use tracing::info;
 
-use crate::config;
+use crate::agent;
 
 #[derive(Args)]
 pub struct Complete {
@@ -31,8 +30,8 @@ pub struct Complete {
     #[arg(long, help = "conf path")]
     conf: Option<PathBuf>,
 
-    #[arg(long, help = "model name", default_value = "gpt4o")]
-    model: String,
+    #[arg(long, help = "agent name", default_value = "chat")]
+    agent: String,
 }
 
 enum ParserState {
@@ -43,8 +42,9 @@ enum ParserState {
 
 impl Complete {
     pub async fn execute(&self) -> Result<()> {
-        let config = config::load(self.conf.as_deref())?;
-        let mut model = config.create(&self.model)?;
+        let registry = agent::load_function_registry()?;
+        let config = agent::load(self.conf.as_deref())?;
+        let mut agent = config.create(&self.agent, &registry)?;
 
         let prompt = fs::OpenOptions::new().read(true).open(&self.prompt).await?;
         let reader = BufReader::new(prompt);
@@ -59,27 +59,27 @@ impl Complete {
                 continue;
             }
             state = self
-                .process_line(&state, &line, &mut model, &mut message, &mut files)
+                .process_line(&state, &line, &mut agent, &mut message, &mut files)
                 .await?
                 .unwrap_or(state);
         }
-        add_message(&mut model, &state, message, files).await?;
+        add_message(&mut agent, &state, message, files).await?;
 
         if !matches!(state, ParserState::User) {
             return Err(anyhow!("last message must be user message".to_string()));
         }
 
-        let mut stream = model.generate_stream().await?;
+        let mut stream = agent.chat.generate_stream().await?;
         let mut prompt = fs::OpenOptions::new().append(true).open(&self.prompt).await?;
         prompt
-            .write_all(format!("\n# assistant ({})\n\n", self.model).as_bytes())
+            .write_all(format!("\n# assistant ({})\n\n", self.agent).as_bytes())
             .await?;
         while let Some(text) = stream.next().await {
             print!("{text}");
             stdout().flush()?;
             prompt.write_all(text.as_bytes()).await?;
         }
-        let usage = model.usage();
+        let usage = agent.chat.usage();
         info!(
             "usage, prompt_tokens={}, completion_tokens={}",
             usage.prompt_tokens, usage.completion_tokens
@@ -91,7 +91,7 @@ impl Complete {
         &self,
         state: &ParserState,
         line: &str,
-        model: &mut Chat,
+        agent: &mut Agent,
         message: &mut String,
         files: &mut Vec<PathBuf>,
     ) -> Result<Option<ParserState>> {
@@ -101,14 +101,14 @@ impl Complete {
             }
             if let Some(option) = parse_option(line)? {
                 info!("option: {:?}", option);
-                model.option(option);
+                agent.chat.option(option);
             }
             return Ok(Some(ParserState::System));
         } else if line.starts_with("# user") {
-            add_message(model, state, mem::take(message), mem::take(files)).await?;
+            add_message(agent, state, mem::take(message), mem::take(files)).await?;
             return Ok(Some(ParserState::User));
         } else if line.starts_with("# assistant") {
-            add_message(model, state, mem::take(message), vec![]).await?;
+            add_message(agent, state, mem::take(message), vec![]).await?;
             return Ok(Some(ParserState::Assistant));
         } else if let Some(file) = line.strip_prefix("> file: ") {
             if !matches!(state, ParserState::User) {
@@ -161,11 +161,11 @@ impl Complete {
     }
 }
 
-async fn add_message(model: &mut Chat, state: &ParserState, message: String, files: Vec<PathBuf>) -> Result<()> {
+async fn add_message(agent: &mut Agent, state: &ParserState, message: String, files: Vec<PathBuf>) -> Result<()> {
     match state {
         ParserState::System => {
             info!("set system message: {}", message);
-            model.system_message(message);
+            agent.chat.system_message(message);
         }
         ParserState::User => {
             info!("add user message: {}", message);
@@ -173,11 +173,11 @@ async fn add_message(model: &mut Chat, state: &ParserState, message: String, fil
             for file in files.iter() {
                 info!("add user data: {}", file.to_string_lossy());
             }
-            model.add_user_message(message, &files)?;
+            agent.chat.add_user_message(message, files)?;
         }
         ParserState::Assistant => {
             info!("add assistent message: {}", message);
-            model.add_assistant_message(message);
+            agent.chat.add_assistant_message(message);
         }
     }
     Ok(())
@@ -189,7 +189,7 @@ fn parse_option(line: &str) -> Result<Option<ChatOption>> {
         let temperature = f32::from_str(&capture[1])?;
         Ok(Some(ChatOption {
             temperature,
-            response_format: ResponseFormat::text(),
+            response_format: None,
         }))
     } else {
         Ok(None)

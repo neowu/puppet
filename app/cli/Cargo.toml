@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 framework.workspace = true
 openai.workspace = true
+agent.workspace = true
 
 anyhow.workspace = true
 tracing.workspace = true

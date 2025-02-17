@@ -14,21 +14,22 @@ use tokio::io::Lines;
 use tokio::io::Stdin;
 use tracing::info;
 
-use crate::config;
+use crate::agent;
 
 #[derive(Args)]
 pub struct Chat {
     #[arg(long, help = "conf path")]
     conf: Option<PathBuf>,
 
-    #[arg(long, help = "model name", default_value = "gpt4o")]
-    model: String,
+    #[arg(long, help = "agent name", default_value = "chat")]
+    agent: String,
 }
 
 impl Chat {
     pub async fn execute(&self) -> Result<()> {
-        let config = config::load(self.conf.as_deref())?;
-        let mut model = config.create(&self.model)?;
+        let registry = agent::load_function_registry()?;
+        let config = agent::load(self.conf.as_deref())?;
+        let mut agent = config.create(&self.agent, &registry)?;
 
         println!(
             r"---
@@ -64,14 +65,14 @@ impl Chat {
             } else {
                 let files = mem::take(&mut files);
                 let files: Vec<&Path> = files.iter().map(|p| p.as_path()).collect();
-                model.add_user_message(input, &files)?;
+                agent.chat.add_user_message(input, files)?;
 
-                let mut stream = model.generate_stream().await?;
+                let mut stream = agent.chat.generate_stream().await?;
                 while let Some(text) = stream.next().await {
                     print!("{text}");
                     stdout().flush()?;
                 }
-                let usage = model.usage();
+                let usage = agent.chat.usage();
                 info!(
                     "usage, prompt_tokens={}, completion_tokens={}",
                     usage.prompt_tokens, usage.completion_tokens

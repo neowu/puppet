@@ -4,11 +4,14 @@ use clap::Subcommand;
 use command::chat::Chat;
 use command::complete::Complete;
 use command::completion::Completion;
+use tracing::level_filters::LevelFilter;
+use tracing_subscriber::filter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::Layer;
 
+pub mod agent;
 mod command;
-mod config;
 
 #[derive(Parser)]
 #[command(author, version)]
@@ -31,8 +34,15 @@ pub enum Command {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let filter = filter::Targets::new().with_default(LevelFilter::INFO);
     tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer().compact().with_line_number(true).with_thread_ids(true))
+        .with(
+            tracing_subscriber::fmt::layer()
+                .compact()
+                .with_line_number(true)
+                .with_thread_ids(true)
+                .with_filter(filter),
+        )
         .init();
 
     let cli = Cli::parse();

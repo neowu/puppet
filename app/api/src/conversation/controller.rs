@@ -75,7 +75,10 @@ fn conversation_view(conversation: Conversation) -> ConversationView {
 }
 
 #[debug_handler]
-async fn get_conversation(Path(id): Path<u32>, State(ApiState { db }): State<ApiState>) -> Result<Json<ConversationDetailView>, ApiError> {
+async fn get_conversation(
+    Path(id): Path<u32>,
+    State(ApiState { db }): State<ApiState>,
+) -> Result<Json<ConversationDetailView>, ApiError> {
     let conversation = repository::get_conversation(db, id)?;
     let json = Json(ConversationDetailView {
         id: conversation.id,
