@@ -7,6 +7,7 @@ use openai::chat::Chat;
 use openai::function::FunctionStore;
 use tracing::Level;
 
+#[allow(unused)]
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -44,39 +45,39 @@ async fn main() -> Result<()> {
     //     ..Default::default()
     // });
 
-    chat.add_user_message(
-        r#"
-        ```
-        class User {
-          firstName: string = "";
-          lastName: string = "";
-          username: string = "";
-        }
+    // chat.add_user_message(
+    //     r#"
+    //     ```
+    //     class User {
+    //       firstName: string = "";
+    //       lastName: string = "";
+    //       username: string = "";
+    //     }
 
-        export default User;
-        ```
-        Replace the username property with an email property. Respond only with code, and with no markdown formatting.
+    //     export default User;
+    //     ```
+    //     Replace the username property with an email property. Respond only with code, and with no markdown formatting.
 
-        "#
-        .to_string(),
-        vec![],
-    )?;
+    //     "#
+    //     .to_string(),
+    //     vec![],
+    // )?;
 
-    let response = chat
-        .generate(Some(
-            r#"
-        class User {
-          firstName: string = "";
-          lastName: string = "";
-          email: string = "";
-        }
+    // let response = chat
+    //     .generate(Some(
+    //         r#"
+    //     class User {
+    //       firstName: string = "";
+    //       lastName: string = "";
+    //       email: string = "";
+    //     }
 
-        export default User;
-        "#
-            .to_string(),
-        ))
-        .await?;
-    println!("{response}");
+    //     export default User;
+    //     "#
+    //         .to_string(),
+    //     ))
+    //     .await?;
+    // println!("{response}");
 
     // let mut stream = chat.generate_stream().await?;
     // while let Some(text) = stream.next().await {

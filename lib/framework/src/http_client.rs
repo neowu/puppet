@@ -15,11 +15,15 @@ pub static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Clien
 
 type BytesResult = Result<Bytes, reqwest::Error>;
 pub trait ResponseExt {
-    fn lines(self) -> Lines<IntoAsyncRead<MapErr<impl Stream<Item = BytesResult>, impl FnMut(reqwest::Error) -> io::Error>>>;
+    fn lines(
+        self,
+    ) -> Lines<IntoAsyncRead<MapErr<impl Stream<Item = BytesResult>, impl FnMut(reqwest::Error) -> io::Error>>>;
 }
 
 impl ResponseExt for reqwest::Response {
-    fn lines(self) -> Lines<IntoAsyncRead<MapErr<impl Stream<Item = BytesResult>, impl FnMut(reqwest::Error) -> io::Error>>> {
+    fn lines(
+        self,
+    ) -> Lines<IntoAsyncRead<MapErr<impl Stream<Item = BytesResult>, impl FnMut(reqwest::Error) -> io::Error>>> {
         self.bytes_stream()
             .map_err(|e| io::Error::new(ErrorKind::Other, e))
             .into_async_read()

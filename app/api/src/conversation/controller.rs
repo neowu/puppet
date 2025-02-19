@@ -49,6 +49,7 @@ struct ConversationDetailView {
     created_time: DateTime<Utc>,
 }
 
+#[allow(unused)]
 #[derive(Deserialize, Debug)]
 struct ChatRequest {
     message: String,
@@ -89,6 +90,7 @@ async fn get_conversation(
     Ok(json)
 }
 
+#[allow(unused)]
 #[debug_handler]
 async fn chat(
     Path(id): Path<u32>,

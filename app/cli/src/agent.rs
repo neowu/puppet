@@ -1,26 +1,22 @@
-use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 
-use agent::config::Config;
+use agent::agent::Agent;
 use agent::function::FunctionRegistry;
 use anyhow::Result;
-use framework::json;
 use openai::chat_api::Function;
 use rand::Rng;
 use serde_json::json;
-use tracing::info;
 
-pub fn load(path: Option<&Path>) -> Result<Config> {
+pub fn load(path: Option<&Path>) -> Result<Agent> {
     let default_config_path = format!("{}/.config/puppet/agent.json", env!("HOME"));
     let path = path.unwrap_or(Path::new(&default_config_path));
-    info!("load config, path={}", path.to_string_lossy());
-    let content = fs::read_to_string(path)?;
-    let config: Config = json::from_json(&content)?;
-    Ok(config)
+    let registry = load_function_registry()?;
+    let agent = Agent::load(path, &registry)?;
+    Ok(agent)
 }
 
-pub fn load_function_registry() -> Result<FunctionRegistry> {
+fn load_function_registry() -> Result<FunctionRegistry> {
     let mut registry = FunctionRegistry::default();
     registry.add(
         Function {

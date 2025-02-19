@@ -3,7 +3,6 @@ use std::io::Write;
 use std::mem;
 use std::path::Path;
 use std::path::PathBuf;
-use std::str::FromStr;
 
 use ::agent::agent::Agent;
 use anyhow::anyhow;
@@ -12,7 +11,6 @@ use clap::Args;
 use framework::fs::path::PathExt;
 use futures::StreamExt;
 use glob::glob;
-use openai::chat::ChatOption;
 use regex::Regex;
 use tokio::fs;
 use tokio::io::AsyncBufReadExt;
@@ -29,22 +27,16 @@ pub struct Complete {
 
     #[arg(long, help = "conf path")]
     conf: Option<PathBuf>,
-
-    #[arg(long, help = "agent name", default_value = "chat")]
-    agent: String,
 }
 
 enum ParserState {
-    System,
     User,
     Assistant,
 }
 
 impl Complete {
     pub async fn execute(&self) -> Result<()> {
-        let registry = agent::load_function_registry()?;
-        let config = agent::load(self.conf.as_deref())?;
-        let mut agent = config.create(&self.agent, &registry)?;
+        let mut agent = agent::load(self.conf.as_deref())?;
 
         let prompt = fs::OpenOptions::new().read(true).open(&self.prompt).await?;
         let reader = BufReader::new(prompt);
@@ -52,6 +44,7 @@ impl Complete {
 
         let mut files: Vec<PathBuf> = vec![];
         let mut message = String::new();
+        let mut agent_name: Option<String> = None;
         let mut state = ParserState::User;
 
         while let Some(line) = lines.next_line().await? {
@@ -59,7 +52,7 @@ impl Complete {
                 continue;
             }
             state = self
-                .process_line(&state, &line, &mut agent, &mut message, &mut files)
+                .process_line(&state, &line, &mut agent, &mut message, &mut files, &mut agent_name)
                 .await?
                 .unwrap_or(state);
         }
@@ -69,21 +62,16 @@ impl Complete {
             return Err(anyhow!("last message must be user message".to_string()));
         }
 
-        let mut stream = agent.chat.generate_stream().await?;
+        let mut stream = agent.chat(None).await?;
         let mut prompt = fs::OpenOptions::new().append(true).open(&self.prompt).await?;
         prompt
-            .write_all(format!("\n# assistant ({})\n\n", self.agent).as_bytes())
+            .write_all(format!("\n# assistant @{}\n\n", agent_name.unwrap_or("main".to_string())).as_bytes())
             .await?;
         while let Some(text) = stream.next().await {
             print!("{text}");
             stdout().flush()?;
             prompt.write_all(text.as_bytes()).await?;
         }
-        let usage = agent.chat.usage();
-        info!(
-            "usage, prompt_tokens={}, completion_tokens={}",
-            usage.prompt_tokens, usage.completion_tokens
-        );
         Ok(())
     }
 
@@ -94,17 +82,13 @@ impl Complete {
         agent: &mut Agent,
         message: &mut String,
         files: &mut Vec<PathBuf>,
+        agent_name: &mut Option<String>,
     ) -> Result<Option<ParserState>> {
-        if line.starts_with("# system") {
-            if !message.is_empty() {
-                return Err(anyhow!("system message must be at first"));
+        if line.starts_with("# user") {
+            let regex = Regex::new(r"@(\w+)")?;
+            if let Some(captures) = regex.captures(line) {
+                *agent_name = Some(captures[1].to_string());
             }
-            if let Some(option) = parse_option(line)? {
-                info!("option: {:?}", option);
-                agent.chat.option(option);
-            }
-            return Ok(Some(ParserState::System));
-        } else if line.starts_with("# user") {
             add_message(agent, state, mem::take(message), mem::take(files)).await?;
             return Ok(Some(ParserState::User));
         } else if line.starts_with("# assistant") {
@@ -163,37 +147,20 @@ impl Complete {
 
 async fn add_message(agent: &mut Agent, state: &ParserState, message: String, files: Vec<PathBuf>) -> Result<()> {
     match state {
-        ParserState::System => {
-            info!("set system message: {}", message);
-            agent.chat.system_message(message);
-        }
         ParserState::User => {
             info!("add user message: {}", message);
             let files: Vec<&Path> = files.iter().map(|p| p.as_path()).collect();
             for file in files.iter() {
                 info!("add user data: {}", file.to_string_lossy());
             }
-            agent.chat.add_user_message(message, files)?;
+            agent.add_user_message(message, files)?;
         }
         ParserState::Assistant => {
             info!("add assistent message: {}", message);
-            agent.chat.add_assistant_message(message);
+            agent.add_assistant_message(message);
         }
     }
     Ok(())
-}
-
-fn parse_option(line: &str) -> Result<Option<ChatOption>> {
-    let regex = Regex::new(r".*temperature=(\d+\.\d+).*")?;
-    if let Some(capture) = regex.captures(line) {
-        let temperature = f32::from_str(&capture[1])?;
-        Ok(Some(ChatOption {
-            temperature,
-            response_format: None,
-        }))
-    } else {
-        Ok(None)
-    }
 }
 
 fn language(extenstion: &str) -> Result<&'static str> {
@@ -201,14 +168,5 @@ fn language(extenstion: &str) -> Result<&'static str> {
         "java" => Ok("java"),
         "rs" => Ok("rust"),
         _ => Err(anyhow!("unsupported extension, ext={}", extenstion)),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn parse_option() {
-        let option = super::parse_option("# system, temperature=2.0, top_p=0.95");
-        assert_eq!(option.unwrap().unwrap().temperature, 2.0);
     }
 }

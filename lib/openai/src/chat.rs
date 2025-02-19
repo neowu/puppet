@@ -1,15 +1,12 @@
-use std::fs;
-use std::path::Path;
-use std::str;
+use core::str;
+use std::env;
 use std::sync::Arc;
 use std::sync::Mutex;
 
 use anyhow::anyhow;
+use anyhow::Context;
 use anyhow::Result;
-use base64::prelude::BASE64_STANDARD;
-use base64::Engine;
 use bytes::Bytes;
-use framework::fs::path::PathExt;
 use framework::http_client::ResponseExt;
 use framework::http_client::HTTP_CLIENT;
 use framework::json;
@@ -19,6 +16,7 @@ use futures::StreamExt;
 use reqwest::Response;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
+use tracing::debug;
 use tracing::info;
 
 use crate::chat_api::ChatCompletionChoice;
@@ -31,62 +29,67 @@ use crate::chat_api::FunctionCall;
 use crate::chat_api::ResponseFormat;
 use crate::chat_api::Role;
 use crate::chat_api::StreamOptions;
+use crate::chat_api::Tool;
 use crate::chat_api::ToolCall;
 use crate::chat_api::Usage;
 use crate::function::FunctionPayload;
 use crate::function::FunctionStore;
 
 pub struct Chat {
-    context: Arc<Mutex<Context>>,
+    function_store: Arc<FunctionStore>,
+    pub config: ChatConfig,
 }
 
-#[derive(Debug)]
-pub struct ChatOption {
-    pub temperature: f32,
-    pub response_format: Option<ResponseFormat>,
-}
-
-impl Default for ChatOption {
-    fn default() -> Self {
-        ChatOption {
-            temperature: 0.7,
-            response_format: None,
-        }
-    }
-}
-
-struct Context {
+#[derive(Default, Debug, Clone)]
+pub struct ChatConfig {
     url: String,
     model: String,
     api_key: String,
-    messages: Vec<ChatRequestMessage>,
-    function_store: FunctionStore,
-    option: ChatOption,
-    usage: Usage,
+
+    pub system_message: Option<String>,
+    pub top_p: Option<f32>,
+    pub temperature: Option<f32>,
+    pub response_format: Option<ResponseFormat>,
+    pub max_tokens: Option<i32>,
 }
 
 impl Chat {
     pub fn new(url: String, api_key: String, model: String, function_store: FunctionStore) -> Self {
         Chat {
-            context: Arc::from(Mutex::new(Context {
+            config: ChatConfig {
                 url,
                 model,
                 api_key,
-                messages: vec![],
-                function_store,
-                option: ChatOption::default(),
-                usage: Usage::default(),
-            })),
+                ..ChatConfig::default()
+            },
+            function_store: Arc::new(function_store),
         }
     }
 
-    pub async fn generate(&self, prediction: Option<String>) -> Result<String> {
+    pub async fn generate(
+        &self,
+        messages: Arc<Mutex<Vec<ChatRequestMessage>>>,
+        prediction: Option<String>,
+    ) -> Result<String> {
         let mut prediction_value = prediction;
+        let tools = self.function_store.definitions();
         loop {
-            let http_response = call_api(Arc::clone(&self.context), false, prediction_value).await?;
+            let http_response = call_api(
+                &self.config,
+                Arc::clone(&messages),
+                tools.clone(),
+                false,
+                prediction_value,
+            )
+            .await?;
             let response: ChatResponse = from_json(&http_response.text().await?)?;
+            debug!(
+                "usage, prompt_tokens={}, completion_tokens={}",
+                response.usage.prompt_tokens, response.usage.completion_tokens
+            );
 
-            let result = process_chat_response(response, Arc::clone(&self.context)).unwrap();
+            let result =
+                process_chat_response(response, Arc::clone(&messages), Arc::clone(&self.function_store)).unwrap();
             if let Some(content) = result {
                 return Ok(content);
             }
@@ -94,15 +97,29 @@ impl Chat {
         }
     }
 
-    pub async fn generate_stream(&self) -> Result<impl Stream<Item = String>> {
+    pub async fn generate_stream(
+        &self,
+        messages: Arc<Mutex<Vec<ChatRequestMessage>>>,
+    ) -> Result<impl Stream<Item = String>> {
         let (tx, rx) = mpsc::channel(64);
-        let context = Arc::clone(&self.context);
+
+        let config = self.config.clone();
+        let tools = self.function_store.definitions();
+        let function_store = Arc::clone(&self.function_store);
+
         tokio::spawn(async move {
             loop {
-                let http_response = call_api(Arc::clone(&context), true, None).await.unwrap();
+                let http_response = call_api(&config, Arc::clone(&messages), tools.clone(), true, None)
+                    .await
+                    .unwrap();
                 let response = read_sse_response(http_response, &tx).await.unwrap();
+                debug!(
+                    "usage, prompt_tokens={}, completion_tokens={}",
+                    response.usage.prompt_tokens, response.usage.completion_tokens
+                );
 
-                let result = process_chat_response(response, Arc::clone(&context)).unwrap();
+                let result =
+                    process_chat_response(response, Arc::clone(&messages), Arc::clone(&function_store)).unwrap();
                 if result.is_some() {
                     break;
                 }
@@ -110,55 +127,15 @@ impl Chat {
         });
         Ok(ReceiverStream::new(rx))
     }
-
-    pub fn system_message(&mut self, message: String) {
-        let mut context = self.context.lock().unwrap();
-        if let Some(message) = context.messages.first() {
-            if let Role::System = message.role {
-                context.messages.remove(0);
-            }
-        }
-        context
-            .messages
-            .insert(0, ChatRequestMessage::new_message(Role::System, message))
-    }
-
-    pub fn add_user_message(&mut self, message: String, files: Vec<&Path>) -> Result<()> {
-        let image_urls = image_urls(files)?;
-        self.context
-            .lock()
-            .unwrap()
-            .add_message(ChatRequestMessage::new_user_message(message, image_urls));
-        Ok(())
-    }
-
-    pub fn add_assistant_message(&mut self, message: String) {
-        self.context
-            .lock()
-            .unwrap()
-            .add_message(ChatRequestMessage::new_message(Role::Assistant, message));
-    }
-
-    pub fn option(&mut self, option: ChatOption) {
-        self.context.lock().unwrap().option = option;
-    }
-
-    pub fn usage(&self) -> Usage {
-        self.context.lock().unwrap().usage.clone()
-    }
-}
-
-impl Context {
-    fn add_message(&mut self, message: ChatRequestMessage) {
-        self.messages.push(message);
-    }
 }
 
 // call function if needed, or return generated content
-fn process_chat_response(response: ChatResponse, context: Arc<Mutex<Context>>) -> Result<Option<String>> {
-    let mut context = context.lock().unwrap();
-    context.usage.merge(&response.usage);
-
+fn process_chat_response(
+    response: ChatResponse,
+    messages: Arc<Mutex<Vec<ChatRequestMessage>>>,
+    function_store: Arc<FunctionStore>,
+) -> Result<Option<String>> {
+    let mut messages = messages.lock().unwrap();
     let message = response.choices.into_iter().next().unwrap();
     if let Some(calls) = message.message.tool_calls {
         let mut functions = Vec::with_capacity(calls.len());
@@ -170,11 +147,11 @@ fn process_chat_response(response: ChatResponse, context: Arc<Mutex<Context>>) -
             })
         }
 
-        context.add_message(ChatRequestMessage::new_function_call(calls));
-        let results = context.function_store.call(functions)?;
+        messages.push(ChatRequestMessage::new_function_call(calls));
+        let results = function_store.call(functions)?;
 
         for result in results {
-            context.add_message(ChatRequestMessage::new_function_response(
+            messages.push(ChatRequestMessage::new_function_response(
                 result.id,
                 json::to_json(&result.value)?,
             ));
@@ -182,46 +159,50 @@ fn process_chat_response(response: ChatResponse, context: Arc<Mutex<Context>>) -
         Ok(None)
     } else {
         let content = message.message.content.clone().unwrap();
-        context.add_message(ChatRequestMessage::new_message(Role::Assistant, content.clone()));
+        messages.push(ChatRequestMessage::new_message(Role::Assistant, content.clone()));
         Ok(Some(content))
     }
 }
 
-async fn call_api(context: Arc<Mutex<Context>>, stream: bool, prediction: Option<String>) -> Result<Response> {
-    let http_request;
-    let body;
-    {
-        let context = context.lock().unwrap();
-        let tools = context.function_store.definitions();
-        let request = ChatRequest {
-            model: context.model.clone(),
-            messages: context.messages.clone(),
-            temperature: context.option.temperature,
-            top_p: 0.95,
-            stream,
-            stream_options: stream.then_some(StreamOptions { include_usage: true }),
-            stop: None,
-            max_tokens: 4096,
-            presence_penalty: 0.0,
-            frequency_penalty: 0.0,
-            tool_choice: tools.is_some().then_some("auto"),
-            tools,
-            response_format: context.option.response_format.clone(),
-            prediction: prediction.map(|content| crate::chat_api::Prediction {
-                r#type: "content",
-                content,
-            }),
-        };
+async fn call_api(
+    config: &ChatConfig,
+    messages: Arc<Mutex<Vec<ChatRequestMessage>>>,
+    tools: Option<Vec<Tool>>,
+    stream: bool,
+    prediction: Option<String>,
+) -> Result<Response> {
+    let request_messages = request_messages(messages, config);
 
-        body = Bytes::from(json::to_json(&request)?);
-        http_request = HTTP_CLIENT
-            .post(&context.url)
-            .header("Content-Type", "application/json")
-            .header("api-key", context.api_key.clone()) // azure api use header
-            .bearer_auth(context.api_key.clone())
-            .body(body.clone());
-    }
+    let request = ChatRequest {
+        model: config.model.clone(),
+        messages: request_messages,
+        temperature: config.temperature.unwrap_or(1.0),
+        top_p: config.top_p.unwrap_or(1.0),
+        stream,
+        stream_options: stream.then_some(StreamOptions { include_usage: true }),
+        stop: None,
+        max_tokens: None,
+        presence_penalty: 0.0,
+        frequency_penalty: 0.0,
+        tool_choice: tools.is_some().then_some("auto"),
+        tools,
+        response_format: config.response_format.clone(),
+        prediction: prediction.map(|content| crate::chat_api::Prediction {
+            r#type: "content",
+            content,
+        }),
+    };
+
+    let body = Bytes::from(json::to_json(&request)?);
+    let api_key = api_key(&config.api_key)?;
+    let http_request = HTTP_CLIENT
+        .post(&config.url)
+        .header("Content-Type", "application/json")
+        .header("api-key", api_key.clone()) // azure api use header
+        .bearer_auth(api_key.clone())
+        .body(body.clone());
     let response = http_request.send().await?;
+
     let status = response.status();
     if status != 200 {
         let body = str::from_utf8(&body)?;
@@ -231,6 +212,26 @@ async fn call_api(context: Arc<Mutex<Context>>, stream: bool, prediction: Option
     }
 
     Ok(response)
+}
+
+fn api_key(api_key: &String) -> Result<String> {
+    if let Some(env) = api_key.strip_prefix("env:") {
+        Ok(env::var(env).context(format!("can not find env, name={env}"))?)
+    } else {
+        Ok(api_key.to_string())
+    }
+}
+
+fn request_messages(messages: Arc<Mutex<Vec<ChatRequestMessage>>>, config: &ChatConfig) -> Vec<ChatRequestMessage> {
+    let messages = messages.lock().unwrap();
+    if let Some(ref system_message) = config.system_message {
+        let mut request_messages = Vec::with_capacity(messages.len() + 1);
+        request_messages.push(ChatRequestMessage::new_message(Role::System, system_message.clone()));
+        request_messages.extend(messages.clone());
+        request_messages
+    } else {
+        messages.clone()
+    }
 }
 
 async fn read_sse_response(http_response: Response, tx: &mpsc::Sender<String>) -> Result<ChatResponse> {
@@ -307,24 +308,4 @@ async fn read_sse_response(http_response: Response, tx: &mpsc::Sender<String>) -
         }
     }
     Ok(response)
-}
-
-fn image_urls(files: Vec<&Path>) -> Result<Vec<String>> {
-    let mut image_urls = Vec::with_capacity(files.len());
-    for file in files {
-        image_urls.push(base64_image_url(file)?)
-    }
-    Ok(image_urls)
-}
-
-fn base64_image_url(path: &Path) -> Result<String> {
-    let extension = path.file_extension()?;
-    let content = fs::read(path)?;
-    let mime_type = match extension {
-        "jpg" => Ok("image/jpeg".to_string()),
-        "png" => Ok("image/png".to_string()),
-        "pdf" => Ok("application/pdf".to_string()),
-        _ => Err(anyhow!("not supported extension, path={}", path.to_string_lossy())),
-    }?;
-    Ok(format!("data:{mime_type};base64,{}", BASE64_STANDARD.encode(content)))
 }

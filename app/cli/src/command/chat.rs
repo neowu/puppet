@@ -7,12 +7,12 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::Args;
 use futures::StreamExt;
+use regex::Regex;
 use tokio::io::stdin;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::BufReader;
 use tokio::io::Lines;
 use tokio::io::Stdin;
-use tracing::info;
 
 use crate::agent;
 
@@ -20,16 +20,11 @@ use crate::agent;
 pub struct Chat {
     #[arg(long, help = "conf path")]
     conf: Option<PathBuf>,
-
-    #[arg(long, help = "agent name", default_value = "chat")]
-    agent: String,
 }
 
 impl Chat {
     pub async fn execute(&self) -> Result<()> {
-        let registry = agent::load_function_registry()?;
-        let config = agent::load(self.conf.as_deref())?;
-        let mut agent = config.create(&self.agent, &registry)?;
+        let mut agent = agent::load(self.conf.as_deref())?;
 
         println!(
             r"---
@@ -37,23 +32,35 @@ impl Chat {
 ---
 # Usage Instructions:
 
-- Type /quit to quit the application.
+- /quit to quit the application.
 
-- Type /file {{file}} to add a file.
+- /file {{file}} to add a file.
+
+- @agent {{message}} to talk to specific agent.
 ---"
         );
+
         let reader = BufReader::new(stdin());
         let mut lines = reader.lines();
         let mut files: Vec<PathBuf> = vec![];
+
+        let regex = Regex::new(r"@(\w+) (.*)")?;
         loop {
             print!("> ");
             stdout().flush()?;
 
-            let input = read_input(&mut lines).await?;
+            let mut input = read_input(&mut lines).await?;
 
             if input.starts_with("/quit") {
                 break;
             }
+
+            let mut agent_name: Option<String> = None;
+            if let Some(capture) = regex.captures(&input) {
+                agent_name = Some(capture[1].to_string());
+                input = capture[2].to_string();
+            }
+
             if let Some(file) = input.strip_prefix("/file ") {
                 let file = PathBuf::from(file);
                 if !file.exists() {
@@ -62,21 +69,17 @@ impl Chat {
                     println!("added file, path: {}", file.to_string_lossy());
                     files.push(file);
                 }
-            } else {
-                let files = mem::take(&mut files);
-                let files: Vec<&Path> = files.iter().map(|p| p.as_path()).collect();
-                agent.chat.add_user_message(input, files)?;
+                continue;
+            }
 
-                let mut stream = agent.chat.generate_stream().await?;
-                while let Some(text) = stream.next().await {
-                    print!("{text}");
-                    stdout().flush()?;
-                }
-                let usage = agent.chat.usage();
-                info!(
-                    "usage, prompt_tokens={}, completion_tokens={}",
-                    usage.prompt_tokens, usage.completion_tokens
-                );
+            let files = mem::take(&mut files);
+            let files: Vec<&Path> = files.iter().map(|p| p.as_path()).collect();
+            agent.add_user_message(input, files)?;
+
+            let mut stream = agent.chat(agent_name).await?;
+            while let Some(text) = stream.next().await {
+                print!("{text}");
+                stdout().flush()?;
             }
         }
 

@@ -87,6 +87,7 @@ fn conversation_row_map(row: &Row<'_>) -> duckdb::Result<Conversation> {
     })
 }
 
+#[allow(unused)]
 pub fn save_conversation(conn: Arc<Mutex<Connection>>, conversation: Conversation) -> Result<()> {
     let conn = conn.lock().unwrap();
     conn.execute(

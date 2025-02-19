@@ -12,7 +12,8 @@ pub struct ChatRequest {
     pub stream_options: Option<StreamOptions>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stop: Option<Vec<String>>,
-    pub max_tokens: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<i32>,
     pub presence_penalty: f32,
     pub frequency_penalty: f32,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -218,19 +219,11 @@ pub struct StreamFunctionCall {
     pub arguments: String,
 }
 
-#[derive(Debug, Default, Deserialize, Clone)]
+#[derive(Debug, Default, Deserialize)]
 pub struct Usage {
     pub prompt_tokens: i32,
     pub completion_tokens: i32,
     pub total_tokens: i32,
-}
-
-impl Usage {
-    pub fn merge(&mut self, other: &Usage) {
-        self.prompt_tokens += other.prompt_tokens;
-        self.completion_tokens += other.completion_tokens;
-        self.total_tokens += other.total_tokens;
-    }
 }
 
 #[derive(Debug, Deserialize)]

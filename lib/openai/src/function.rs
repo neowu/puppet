@@ -33,7 +33,11 @@ impl FunctionStore {
     }
 
     pub fn definitions(&self) -> Option<Vec<Tool>> {
-        self.definitions.is_empty().then(|| self.definitions.clone())
+        if self.definitions.is_empty() {
+            None
+        } else {
+            Some(self.definitions.clone())
+        }
     }
 
     pub fn call(&self, functions: Vec<FunctionPayload>) -> Result<Vec<FunctionPayload>> {
