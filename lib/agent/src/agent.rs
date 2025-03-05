@@ -5,11 +5,11 @@ use std::str;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use anyhow::anyhow;
 use anyhow::Context;
 use anyhow::Result;
-use base64::prelude::BASE64_STANDARD;
+use anyhow::anyhow;
 use base64::Engine;
+use base64::prelude::BASE64_STANDARD;
 use framework::fs::path::PathExt;
 use framework::json;
 use futures::Stream;
@@ -81,7 +81,7 @@ impl Agent {
         Ok(agent)
     }
 
-    pub async fn chat(&self, agent: Option<String>) -> Result<impl Stream<Item = String>> {
+    pub async fn chat(&self, agent: Option<String>) -> Result<impl Stream<Item = String> + use<'_>> {
         let agent = agent.unwrap_or("main".to_string());
         let chat = self
             .chats

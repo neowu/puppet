@@ -1,21 +1,29 @@
+use std::error::Error;
 use std::future::Future;
 use std::sync::LazyLock;
 
 use tokio::task::JoinHandle;
 use tokio_util::task::TaskTracker;
-use tracing::info;
 use tracing::Instrument;
 use tracing::Span;
+use tracing::info;
 
 static TASK_TRACKER: LazyLock<TaskTracker> = LazyLock::new(TaskTracker::new);
 
-pub fn spawn<F>(task: F) -> JoinHandle<F::Output>
+pub fn spawn<F>(task: F) -> JoinHandle<()>
 where
-    F: Future + Send + 'static,
-    F::Output: Send + 'static,
+    F: Future<Output = Result<(), Box<dyn Error>>> + Send + 'static,
 {
     let span = Span::current();
-    TASK_TRACKER.spawn(task.instrument(span))
+
+    let task_wrapper = async move {
+        let result = task.await;
+        if let Err(err) = result {
+            panic!("task failed, error={}", err);
+        }
+    };
+
+    TASK_TRACKER.spawn(task_wrapper.instrument(span))
 }
 
 pub async fn shutdown() {

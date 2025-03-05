@@ -8,7 +8,7 @@ openai = { path = "lib/openai" }
 agent = { path = "lib/agent" }
 
 tracing = "*"
-tracing-subscriber = "*"
+tracing-subscriber = { version = "*", features = ["env-filter"]}
 anyhow = "*"
 
 clap = { version = "*", features = ["derive"] }

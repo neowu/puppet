@@ -1,14 +1,12 @@
 use core::str;
-use std::env;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use anyhow::anyhow;
-use anyhow::Context;
 use anyhow::Result;
+use anyhow::anyhow;
 use bytes::Bytes;
-use framework::http_client::ResponseExt;
 use framework::http_client::HTTP_CLIENT;
+use framework::http_client::ResponseExt;
 use framework::json;
 use framework::json::from_json;
 use futures::Stream;
@@ -19,6 +17,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tracing::debug;
 use tracing::info;
 
+use crate::api_key;
 use crate::chat_api::ChatCompletionChoice;
 use crate::chat_api::ChatRequest;
 use crate::chat_api::ChatRequestMessage;
@@ -109,19 +108,16 @@ impl Chat {
 
         tokio::spawn(async move {
             loop {
-                let http_response = call_api(&config, Arc::clone(&messages), tools.clone(), true, None)
-                    .await
-                    .unwrap();
-                let response = read_sse_response(http_response, &tx).await.unwrap();
+                let http_response = call_api(&config, Arc::clone(&messages), tools.clone(), true, None).await?;
+                let response = read_sse_response(http_response, &tx).await?;
                 debug!(
                     "usage, prompt_tokens={}, completion_tokens={}",
                     response.usage.prompt_tokens, response.usage.completion_tokens
                 );
 
-                let result =
-                    process_chat_response(response, Arc::clone(&messages), Arc::clone(&function_store)).unwrap();
+                let result = process_chat_response(response, Arc::clone(&messages), Arc::clone(&function_store))?;
                 if result.is_some() {
-                    break;
+                    return Ok::<_, anyhow::Error>(());
                 }
             }
         });
@@ -181,7 +177,7 @@ async fn call_api(
         stream,
         stream_options: stream.then_some(StreamOptions { include_usage: true }),
         stop: None,
-        max_tokens: None,
+        max_completion_tokens: None,
         presence_penalty: 0.0,
         frequency_penalty: 0.0,
         tool_choice: tools.is_some().then_some("auto"),
@@ -212,14 +208,6 @@ async fn call_api(
     }
 
     Ok(response)
-}
-
-fn api_key(api_key: &String) -> Result<String> {
-    if let Some(env) = api_key.strip_prefix("env:") {
-        Ok(env::var(env).context(format!("can not find env, name={env}"))?)
-    } else {
-        Ok(api_key.to_string())
-    }
 }
 
 fn request_messages(messages: Arc<Mutex<Vec<ChatRequestMessage>>>, config: &ChatConfig) -> Vec<ChatRequestMessage> {

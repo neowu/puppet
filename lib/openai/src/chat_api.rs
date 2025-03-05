@@ -13,7 +13,7 @@ pub struct ChatRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stop: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_tokens: Option<i32>,
+    pub max_completion_tokens: Option<i32>,
     pub presence_penalty: f32,
     pub frequency_penalty: f32,
     #[serde(skip_serializing_if = "Option::is_none")]

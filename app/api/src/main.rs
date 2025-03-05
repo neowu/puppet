@@ -30,7 +30,12 @@ pub struct ApiState {
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer().compact().with_line_number(true).with_thread_ids(true))
+        .with(
+            tracing_subscriber::fmt::layer()
+                .compact()
+                .with_line_number(true)
+                .with_thread_ids(true),
+        )
         .init();
 
     let cli = Cli::parse();
@@ -47,7 +52,7 @@ async fn main() -> Result<()> {
     let app = app.merge(conversation::routes());
     let app = app.with_state(state);
 
-    framework::web::start_http_server(app).await?;
+    framework::web::server::start_http_server(app).await?;
     framework::task::shutdown().await;
 
     Ok(())
