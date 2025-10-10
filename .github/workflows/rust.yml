@@ -16,13 +16,6 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - uses: actions-rust-lang/setup-rust-toolchain@v1
-      - name: install kafka lib
-        uses: myci-actions/add-deb-repo@11
-        with:
-          repo: deb https://packages.confluent.io/clients/deb bookworm main
-          repo-name: confluent
-          keys-asc: https://packages.confluent.io/deb/7.9/archive.key
-          install: librdkafka-dev
       - name: check
         run: cargo clippy -- -D warnings
       - name: test
