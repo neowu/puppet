@@ -1,14 +1,14 @@
-use anyhow::Result;
 use clap::Parser;
 use clap::Subcommand;
 use command::chat::Chat;
 use command::complete::Complete;
 use command::completion::Completion;
+use framework::exception::Exception;
 use tracing::level_filters::LevelFilter;
+use tracing_subscriber::Layer;
 use tracing_subscriber::filter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::Layer;
 
 pub mod agent;
 mod command;
@@ -33,7 +33,7 @@ pub enum Command {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> Result<(), Exception> {
     let filter = filter::Targets::new().with_default(LevelFilter::INFO);
     tracing_subscriber::registry()
         .with(

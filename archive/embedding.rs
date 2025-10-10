@@ -1,9 +1,7 @@
 use core::str;
 
-use anyhow::anyhow;
-use anyhow::Result;
 use bytes::Bytes;
-use framework::http_client::HTTP_CLIENT;
+use framework::exception::Exception;
 use framework::json;
 use serde::Deserialize;
 use serde::Serialize;
@@ -45,7 +43,7 @@ impl Embedding {
         Self { url, model, api_key }
     }
 
-    pub async fn encode(&self, input: String) -> Result<Vec<f32>> {
+    pub async fn encode(&self, input: String) -> Result<Vec<f32>, Exception> {
         let request = EmbeddingRequest {
             model: self.model.clone(),
             input,

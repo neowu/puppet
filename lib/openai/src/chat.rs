@@ -1,21 +1,20 @@
-use core::str;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use anyhow::Result;
-use anyhow::anyhow;
-use bytes::Bytes;
-use framework::http_client::HTTP_CLIENT;
-use framework::http_client::ResponseExt;
+use framework::exception;
+use framework::exception::Exception;
+use framework::http::EventSource;
+use framework::http::HeaderName;
+use framework::http::HttpClient;
+use framework::http::HttpMethod::POST;
+use framework::http::HttpRequest;
 use framework::json;
 use framework::json::from_json;
 use futures::Stream;
 use futures::StreamExt;
-use reqwest::Response;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::debug;
-use tracing::info;
 
 use crate::api_key;
 use crate::chat_api::ChatCompletionChoice;
@@ -35,6 +34,7 @@ use crate::function::FunctionPayload;
 use crate::function::FunctionStore;
 
 pub struct Chat {
+    http_client: HttpClient,
     function_store: Arc<FunctionStore>,
     pub config: ChatConfig,
 }
@@ -55,6 +55,7 @@ pub struct ChatConfig {
 impl Chat {
     pub fn new(url: String, api_key: String, model: String, function_store: FunctionStore) -> Self {
         Chat {
+            http_client: HttpClient::default(),
             config: ChatConfig {
                 url,
                 model,
@@ -69,19 +70,24 @@ impl Chat {
         &self,
         messages: Arc<Mutex<Vec<ChatRequestMessage>>>,
         prediction: Option<String>,
-    ) -> Result<String> {
+    ) -> Result<String, Exception> {
         let mut prediction_value = prediction;
         let tools = self.function_store.definitions();
         loop {
-            let http_response = call_api(
+            let http_request = request(
                 &self.config,
                 Arc::clone(&messages),
                 tools.clone(),
                 false,
                 prediction_value,
-            )
-            .await?;
-            let response: ChatResponse = from_json(&http_response.text().await?)?;
+            )?;
+            let http_response = self.http_client.execute(http_request).await?;
+            if http_response.status != 200 {
+                return Err(exception!(
+                    message = format!("failed to call openai api, status={}", http_response.status)
+                ));
+            }
+            let response: ChatResponse = from_json(&http_response.body)?;
             debug!(
                 "usage, prompt_tokens={}, completion_tokens={}",
                 response.usage.prompt_tokens, response.usage.completion_tokens
@@ -99,25 +105,26 @@ impl Chat {
     pub async fn generate_stream(
         &self,
         messages: Arc<Mutex<Vec<ChatRequestMessage>>>,
-    ) -> Result<impl Stream<Item = String>> {
+    ) -> Result<impl Stream<Item = String>, Exception> {
         let (tx, rx) = mpsc::channel(64);
 
-        let config = self.config.clone();
         let tools = self.function_store.definitions();
         let function_store = Arc::clone(&self.function_store);
 
+        let http_client = self.http_client.clone();
+        let config = self.config.clone();
         tokio::spawn(async move {
             loop {
-                let http_response = call_api(&config, Arc::clone(&messages), tools.clone(), true, None).await?;
-                let response = read_sse_response(http_response, &tx).await?;
+                let http_request = request(&config, Arc::clone(&messages), tools.clone(), true, None)?;
+                let event_source = http_client.sse(http_request).await?;
+                let response = read_sse_response(event_source, &tx).await?;
                 debug!(
                     "usage, prompt_tokens={}, completion_tokens={}",
                     response.usage.prompt_tokens, response.usage.completion_tokens
                 );
-
                 let result = process_chat_response(response, Arc::clone(&messages), Arc::clone(&function_store))?;
                 if result.is_some() {
-                    return Ok::<_, anyhow::Error>(());
+                    return Ok::<_, Exception>(());
                 }
             }
         });
@@ -125,12 +132,46 @@ impl Chat {
     }
 }
 
+fn request(
+    config: &ChatConfig,
+    messages: Arc<Mutex<Vec<ChatRequestMessage>>>,
+    tools: Option<Vec<Tool>>,
+    stream: bool,
+    prediction: Option<String>,
+) -> Result<HttpRequest, Exception> {
+    let request_messages = request_messages(messages, config);
+    let request = ChatRequest {
+        model: config.model.clone(),
+        messages: request_messages,
+        temperature: config.temperature.unwrap_or(1.0),
+        top_p: config.top_p.unwrap_or(1.0),
+        stream,
+        stream_options: stream.then_some(StreamOptions { include_usage: true }),
+        stop: None,
+        max_completion_tokens: None,
+        presence_penalty: 0.0,
+        frequency_penalty: 0.0,
+        tool_choice: tools.is_some().then_some("auto"),
+        tools,
+        response_format: config.response_format.clone(),
+        prediction: prediction.map(|content| crate::chat_api::Prediction {
+            r#type: "content",
+            content,
+        }),
+    };
+    let mut http_request = HttpRequest::new(POST, &config.url);
+    http_request.body(json::to_json(&request)?, "application/json");
+    let api_key = api_key(&config.api_key)?;
+    http_request.headers.insert(HeaderName::from_static("api-key"), api_key);
+    Ok(http_request)
+}
+
 // call function if needed, or return generated content
 fn process_chat_response(
     response: ChatResponse,
     messages: Arc<Mutex<Vec<ChatRequestMessage>>>,
     function_store: Arc<FunctionStore>,
-) -> Result<Option<String>> {
+) -> Result<Option<String>, Exception> {
     let mut messages = messages.lock().unwrap();
     let message = response.choices.into_iter().next().unwrap();
     if let Some(calls) = message.message.tool_calls {
@@ -160,56 +201,6 @@ fn process_chat_response(
     }
 }
 
-async fn call_api(
-    config: &ChatConfig,
-    messages: Arc<Mutex<Vec<ChatRequestMessage>>>,
-    tools: Option<Vec<Tool>>,
-    stream: bool,
-    prediction: Option<String>,
-) -> Result<Response> {
-    let request_messages = request_messages(messages, config);
-
-    let request = ChatRequest {
-        model: config.model.clone(),
-        messages: request_messages,
-        temperature: config.temperature.unwrap_or(1.0),
-        top_p: config.top_p.unwrap_or(1.0),
-        stream,
-        stream_options: stream.then_some(StreamOptions { include_usage: true }),
-        stop: None,
-        max_completion_tokens: None,
-        presence_penalty: 0.0,
-        frequency_penalty: 0.0,
-        tool_choice: tools.is_some().then_some("auto"),
-        tools,
-        response_format: config.response_format.clone(),
-        prediction: prediction.map(|content| crate::chat_api::Prediction {
-            r#type: "content",
-            content,
-        }),
-    };
-
-    let body = Bytes::from(json::to_json(&request)?);
-    let api_key = api_key(&config.api_key)?;
-    let http_request = HTTP_CLIENT
-        .post(&config.url)
-        .header("Content-Type", "application/json")
-        .header("api-key", api_key.clone()) // azure api use header
-        .bearer_auth(api_key.clone())
-        .body(body.clone());
-    let response = http_request.send().await?;
-
-    let status = response.status();
-    if status != 200 {
-        let body = str::from_utf8(&body)?;
-        info!("body={}", body);
-        let response_text = response.text().await?;
-        return Err(anyhow!("failed to call api, status={status}, response={response_text}"));
-    }
-
-    Ok(response)
-}
-
 fn request_messages(messages: Arc<Mutex<Vec<ChatRequestMessage>>>, config: &ChatConfig) -> Vec<ChatRequestMessage> {
     let messages = messages.lock().unwrap();
     if let Some(ref system_message) = config.system_message {
@@ -222,7 +213,10 @@ fn request_messages(messages: Arc<Mutex<Vec<ChatRequestMessage>>>, config: &Chat
     }
 }
 
-async fn read_sse_response(http_response: Response, tx: &mpsc::Sender<String>) -> Result<ChatResponse> {
+async fn read_sse_response(
+    mut event_source: EventSource,
+    tx: &mpsc::Sender<String>,
+) -> Result<ChatResponse, Exception> {
     let mut response = ChatResponse {
         choices: vec![ChatCompletionChoice {
             index: 0,
@@ -234,65 +228,59 @@ async fn read_sse_response(http_response: Response, tx: &mpsc::Sender<String>) -
         }],
         usage: Usage::default(),
     };
+
     // only support one choice, n=1
     let choice = response.choices.first_mut().unwrap();
 
-    let mut lines = http_response.lines();
-    while let Some(line) = lines.next().await {
-        let line = line?;
+    while let Some(event) = event_source.next().await {
+        let event = event?;
 
-        if let Some(data) = line.strip_prefix("data: ") {
-            if data == "[DONE]" {
-                break;
-            }
+        let stream_response: ChatStreamResponse = json::from_json(&event.data)?;
 
-            let stream_response: ChatStreamResponse = json::from_json(data)?;
+        if let Some(stream_choice) = stream_response.choices.into_iter().next() {
+            choice.index = stream_choice.index;
 
-            if let Some(stream_choice) = stream_response.choices.into_iter().next() {
-                choice.index = stream_choice.index;
-
-                if let Some(stream_calls) = stream_choice.delta.tool_calls {
-                    if choice.message.tool_calls.is_none() {
-                        choice.message.tool_calls = Some(vec![]);
-                    }
-
-                    // stream tool call only return single element
-                    let stream_call = stream_calls.into_iter().next().unwrap();
-                    if let Some(name) = stream_call.function.name {
-                        choice.message.tool_calls.as_mut().unwrap().push(ToolCall {
-                            id: stream_call.id.unwrap(),
-                            r#type: "function".to_string(),
-                            function: FunctionCall {
-                                name,
-                                arguments: String::new(),
-                            },
-                        });
-                    }
-                    let tool_call = choice
-                        .message
-                        .tool_calls
-                        .as_mut()
-                        .unwrap()
-                        .get_mut(stream_call.index as usize)
-                        .unwrap();
-                    tool_call.function.arguments.push_str(&stream_call.function.arguments);
-                } else if let Some(content) = stream_choice.delta.content {
-                    choice.append_content(&content);
-                    tx.send(content).await?;
+            if let Some(stream_calls) = stream_choice.delta.tool_calls {
+                if choice.message.tool_calls.is_none() {
+                    choice.message.tool_calls = Some(vec![]);
                 }
 
-                if let Some(finish_reason) = stream_choice.finish_reason {
-                    choice.finish_reason = finish_reason;
-                    if choice.finish_reason == "stop" {
-                        // chatgpt doesn't return '\n' at end of message
-                        tx.send("\n".to_string()).await?;
-                    }
+                // stream tool call only return single element
+                let stream_call = stream_calls.into_iter().next().unwrap();
+                if let Some(name) = stream_call.function.name {
+                    choice.message.tool_calls.as_mut().unwrap().push(ToolCall {
+                        id: stream_call.id.unwrap(),
+                        r#type: "function".to_string(),
+                        function: FunctionCall {
+                            name,
+                            arguments: String::new(),
+                        },
+                    });
                 }
+                let tool_call = choice
+                    .message
+                    .tool_calls
+                    .as_mut()
+                    .unwrap()
+                    .get_mut(stream_call.index as usize)
+                    .unwrap();
+                tool_call.function.arguments.push_str(&stream_call.function.arguments);
+            } else if let Some(content) = stream_choice.delta.content {
+                choice.append_content(&content);
+                tx.send(content).await?;
             }
 
-            if let Some(usage) = stream_response.usage {
-                response.usage = usage;
+            if let Some(finish_reason) = stream_choice.finish_reason {
+                choice.finish_reason = finish_reason;
+                if choice.finish_reason == "stop" {
+                    // chatgpt doesn't return '\n' at end of message
+                    tx.send("\n".to_string()).await?;
+                }
             }
+        }
+
+        if let Some(usage) = stream_response.usage {
+            response.usage = usage;
         }
     }
     Ok(response)

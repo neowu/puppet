@@ -7,7 +7,7 @@ use axum::extract::State;
 use axum::response::Sse;
 use axum::response::sse::Event;
 use axum::routing::post;
-use framework::http_client::HTTP_CLIENT;
+use framework::http_client::HttpClient;
 use framework::http_client::ResponseExt;
 use framework::json::from_json;
 use framework::task;
@@ -29,22 +29,22 @@ pub fn routes() -> Router<AppState> {
 }
 
 #[debug_handler]
-async fn openai(State(config): State<AppState>, body: Bytes) -> HttpResult<Sse<impl Stream<Item = Result<Event>>>> {
-    let url = config.config.proxy["openai"].url("gpt-4o");
-    let api_key = config.config.proxy["openai"].api_key()?;
-    proxy(url, body, api_key).await
+async fn openai(State(state): State<AppState>, body: Bytes) -> HttpResult<Sse<impl Stream<Item = Result<Event>>>> {
+    let url = state.config.proxy["openai"].url("gpt-4o");
+    let api_key = state.config.proxy["openai"].api_key()?;
+    proxy(state.http_client, url, body, api_key).await
 }
 
 #[debug_handler]
-async fn deepseek(State(config): State<AppState>, body: Bytes) -> HttpResult<Sse<impl Stream<Item = Result<Event>>>> {
-    let url = config.config.proxy["deepseek"].url("DeepSeek-R1");
-    let api_key = config.config.proxy["deepseek"].api_key()?;
-    proxy(url, body, api_key).await
+async fn deepseek(State(state): State<AppState>, body: Bytes) -> HttpResult<Sse<impl Stream<Item = Result<Event>>>> {
+    let url = state.config.proxy["deepseek"].url("DeepSeek-R1");
+    let api_key = state.config.proxy["deepseek"].api_key()?;
+    proxy(state.http_client, url, body, api_key).await
 }
 
 #[debug_handler]
 async fn vertexai(
-    State(config): State<AppState>,
+    State(state): State<AppState>,
     Path(model): Path<String>,
     body: Bytes,
 ) -> HttpResult<Sse<impl Stream<Item = Result<Event>>>> {
@@ -54,15 +54,20 @@ async fn vertexai(
         "gemini-2.0-pro-exp-02-05"
     };
 
-    let url = config.config.proxy["vertexai"].url(model);
-    let api_key = config.config.proxy["vertexai"].api_key()?;
-    proxy(url, body, api_key).await
+    let url = state.config.proxy["vertexai"].url(model);
+    let api_key = state.config.proxy["vertexai"].api_key()?;
+    proxy(state.http_client, url, body, api_key).await
 }
 
-async fn proxy(url: String, body: Bytes, api_key: String) -> HttpResult<Sse<impl Stream<Item = Result<Event>>>> {
+async fn proxy(
+    http_client: HttpClient,
+    url: String,
+    body: Bytes,
+    api_key: String,
+) -> HttpResult<Sse<impl Stream<Item = Result<Event>>>> {
     let (tx, rx) = mpsc::channel(64);
     task::spawn(async move {
-        let http_request = HTTP_CLIENT
+        let http_request = http_client
             .post(url)
             .header("Content-Type", "application/json")
             .header("api-key", &api_key)

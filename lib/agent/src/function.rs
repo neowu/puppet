@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::Context;
-use anyhow::Result;
+use framework::exception;
+use framework::exception::Exception;
 use openai::chat_api::Function;
 use openai::function::FunctionImplementation;
 use openai::function::FunctionStore;
@@ -19,18 +19,18 @@ impl FunctionRegistry {
         self.functions.insert(function.name.to_string(), function);
     }
 
-    pub fn create_store(&self, functions: &[String]) -> Result<FunctionStore> {
+    pub fn create_store(&self, functions: &[String]) -> Result<FunctionStore, Exception> {
         let mut store = FunctionStore::default();
         for function in functions {
             let implementation = self
                 .implementations
                 .get(function)
-                .with_context(|| format!("function not found, name={function}"))?
+                .ok_or_else(|| exception!(message = format!("function not found, name={function}")))?
                 .clone();
             let function = self
                 .functions
                 .get(function)
-                .with_context(|| format!("function not found, name={function}"))?
+                .ok_or_else(|| exception!(message = format!("function not found, name={function}")))?
                 .clone();
             store.add(function, implementation);
         }

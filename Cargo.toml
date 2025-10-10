@@ -1,15 +1,14 @@
 [workspace]
 resolver = "3"
-members = [ "app/*", "lib/*" ]
+members = ["app/*", "lib/*"]
 
 [workspace.dependencies]
-framework = { path = "lib/framework" }
+framework   = { git = "https://github.com/neowu/core_rs_workspace" }
 openai = { path = "lib/openai" }
 agent = { path = "lib/agent" }
 
 tracing = "*"
-tracing-subscriber = { version = "*", features = ["env-filter"]}
-anyhow = "*"
+tracing-subscriber = { version = "*", features = ["env-filter"] }
 
 clap = { version = "*", features = ["derive"] }
 clap_complete = "*"
@@ -17,10 +16,7 @@ clap_complete = "*"
 serde = { version = "*", features = ["derive"] }
 serde_json = "*"
 tokio = { version = "*", features = ["full"] }
-tokio-util = { version = "*", features = ["rt"] }
 tokio-stream = { version = "*" }
-axum = { version = "*", features = ["macros"] }
-reqwest = { version = "*", features = ["stream", "socks"] }
 
 futures = "*"
 bytes = "*"

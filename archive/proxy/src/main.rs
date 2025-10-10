@@ -5,6 +5,8 @@ use axum::Router;
 use clap::Parser;
 use clap::command;
 use config::Config;
+use framework::http_client::HttpClient;
+use framework::http_client::http_client;
 use framework::json;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::EnvFilter;
@@ -22,6 +24,7 @@ struct Cli {
 #[derive(Clone)]
 pub struct AppState {
     pub config: Config,
+    pub http_client: HttpClient,
 }
 
 #[tokio::main]
@@ -41,7 +44,10 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
     let config: Config = json::load_file(&cli.conf)?;
-    let state = AppState { config };
+    let state = AppState {
+        config,
+        http_client: http_client(),
+    };
 
     let app: Router<AppState> = Router::new();
     let app = app.merge(proxy::routes());

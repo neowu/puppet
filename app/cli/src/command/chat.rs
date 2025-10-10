@@ -1,18 +1,18 @@
-use std::io::stdout;
 use std::io::Write;
+use std::io::stdout;
 use std::mem;
 use std::path::Path;
 use std::path::PathBuf;
 
-use anyhow::Result;
 use clap::Args;
+use framework::exception::Exception;
 use futures::StreamExt;
 use regex::Regex;
-use tokio::io::stdin;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::BufReader;
 use tokio::io::Lines;
 use tokio::io::Stdin;
+use tokio::io::stdin;
 
 use crate::agent;
 
@@ -23,7 +23,7 @@ pub struct Chat {
 }
 
 impl Chat {
-    pub async fn execute(&self) -> Result<()> {
+    pub async fn execute(&self) -> Result<(), Exception> {
         let mut agent = agent::load(self.conf.as_deref())?;
 
         println!(
@@ -87,7 +87,7 @@ impl Chat {
     }
 }
 
-async fn read_input(lines: &mut Lines<BufReader<Stdin>>) -> Result<String> {
+async fn read_input(lines: &mut Lines<BufReader<Stdin>>) -> Result<String, Exception> {
     let mut input = String::new();
     let mut is_multiline = false;
     while let Some(line) = lines.next_line().await? {

@@ -5,11 +5,10 @@ use std::str;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use anyhow::Context;
-use anyhow::Result;
-use anyhow::anyhow;
 use base64::Engine;
 use base64::prelude::BASE64_STANDARD;
+use framework::exception;
+use framework::exception::Exception;
 use framework::fs::path::PathExt;
 use framework::json;
 use futures::Stream;
@@ -49,7 +48,7 @@ pub struct Agent {
 }
 
 impl Agent {
-    pub fn load(path: &Path, registry: &FunctionRegistry) -> Result<Agent> {
+    pub fn load(path: &Path, registry: &FunctionRegistry) -> Result<Agent, Exception> {
         info!("load config, path={}", path.to_string_lossy());
         let content = fs::read_to_string(path)?;
         let config: Config = json::from_json(&content)?;
@@ -68,29 +67,29 @@ impl Agent {
             let model_config = config
                 .models
                 .get(&agent_config.model)
-                .with_context(|| format!("can not find model, name={}", agent_config.model))?;
+                .ok_or_else(|| exception!(message = format!("can not find model, name={}", agent_config.model)))?;
             info!("create chat, name={name}");
             let chat = create_chat(&agent_config, model_config, registry)?;
             agent.chats.insert(name, chat);
         }
 
         if !found_main {
-            return Err(anyhow!("main agent is not found"));
+            return Err(exception!(message = "main agent is not found"));
         }
 
         Ok(agent)
     }
 
-    pub async fn chat(&self, agent: Option<String>) -> Result<impl Stream<Item = String> + use<'_>> {
+    pub async fn chat(&self, agent: Option<String>) -> Result<impl Stream<Item = String>, Exception> {
         let agent = agent.unwrap_or("main".to_string());
         let chat = self
             .chats
             .get(&agent)
-            .context(format!("agent not found, name={agent}"))?;
+            .ok_or_else(|| exception!(message = format!("agent not found, name={agent}")))?;
         chat.generate_stream(self.messages.clone()).await
     }
 
-    pub fn add_user_message(&mut self, message: String, files: Vec<&Path>) -> Result<()> {
+    pub fn add_user_message(&mut self, message: String, files: Vec<&Path>) -> Result<(), Exception> {
         self.messages
             .lock()
             .unwrap()
@@ -106,7 +105,11 @@ impl Agent {
     }
 }
 
-fn create_chat(agent_config: &AgentConfig, model_config: &ModelConfig, registry: &FunctionRegistry) -> Result<Chat> {
+fn create_chat(
+    agent_config: &AgentConfig,
+    model_config: &ModelConfig,
+    registry: &FunctionRegistry,
+) -> Result<Chat, Exception> {
     let function_store = registry.create_store(agent_config.functions.as_ref().unwrap_or(&vec![]))?;
 
     let mut chat = Chat::new(
@@ -129,7 +132,7 @@ fn create_chat(agent_config: &AgentConfig, model_config: &ModelConfig, registry:
     Ok(chat)
 }
 
-fn image_urls(files: Vec<&Path>) -> Result<Vec<String>> {
+fn image_urls(files: Vec<&Path>) -> Result<Vec<String>, Exception> {
     let mut image_urls = Vec::with_capacity(files.len());
     for file in files {
         image_urls.push(base64_image_url(file)?)
@@ -137,14 +140,16 @@ fn image_urls(files: Vec<&Path>) -> Result<Vec<String>> {
     Ok(image_urls)
 }
 
-fn base64_image_url(path: &Path) -> Result<String> {
+fn base64_image_url(path: &Path) -> Result<String, Exception> {
     let extension = path.file_extension()?;
     let content = fs::read(path)?;
     let mime_type = match extension {
         "jpg" => Ok("image/jpeg".to_string()),
         "png" => Ok("image/png".to_string()),
         "pdf" => Ok("application/pdf".to_string()),
-        _ => Err(anyhow!("not supported extension, path={}", path.to_string_lossy())),
+        _ => Err(exception!(
+            message = format!("not supported extension, path={}", path.to_string_lossy())
+        )),
     }?;
     Ok(format!("data:{mime_type};base64,{}", BASE64_STANDARD.encode(content)))
 }

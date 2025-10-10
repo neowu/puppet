@@ -1,11 +1,11 @@
 use std::io;
 
-use anyhow::Context;
-use anyhow::Result;
 use clap::Args;
 use clap::CommandFactory;
-use clap_complete::generate;
 use clap_complete::Shell;
+use clap_complete::generate;
+use framework::exception;
+use framework::exception::Exception;
 
 use crate::Cli;
 
@@ -15,8 +15,8 @@ const CARGO_PKG_NAME: &str = env!("CARGO_PKG_NAME");
 pub struct Completion;
 
 impl Completion {
-    pub fn execute(&self) -> Result<()> {
-        let shell = Shell::from_env().context("unknown shell")?;
+    pub fn execute(&self) -> Result<(), Exception> {
+        let shell = Shell::from_env().ok_or_else(|| exception!(message = "unknown shell"))?;
         generate(shell, &mut Cli::command(), CARGO_PKG_NAME, &mut io::stdout());
         Ok(())
     }

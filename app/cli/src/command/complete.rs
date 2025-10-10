@@ -1,13 +1,13 @@
-use std::io::stdout;
 use std::io::Write;
+use std::io::stdout;
 use std::mem;
 use std::path::Path;
 use std::path::PathBuf;
 
 use ::agent::agent::Agent;
-use anyhow::anyhow;
-use anyhow::Result;
 use clap::Args;
+use framework::exception;
+use framework::exception::Exception;
 use framework::fs::path::PathExt;
 use futures::StreamExt;
 use glob::glob;
@@ -35,7 +35,7 @@ enum ParserState {
 }
 
 impl Complete {
-    pub async fn execute(&self) -> Result<()> {
+    pub async fn execute(&self) -> Result<(), Exception> {
         let mut agent = agent::load(self.conf.as_deref())?;
 
         let prompt = fs::OpenOptions::new().read(true).open(&self.prompt).await?;
@@ -59,7 +59,7 @@ impl Complete {
         add_message(&mut agent, &state, message, files).await?;
 
         if !matches!(state, ParserState::User) {
-            return Err(anyhow!("last message must be user message".to_string()));
+            return Err(exception!(message = "last message must be user message"));
         }
 
         let mut stream = agent.chat(None).await?;
@@ -83,7 +83,7 @@ impl Complete {
         message: &mut String,
         files: &mut Vec<PathBuf>,
         agent_name: &mut Option<String>,
-    ) -> Result<Option<ParserState>> {
+    ) -> Result<Option<ParserState>, Exception> {
         if line.starts_with("# user") {
             let regex = Regex::new(r"@(\w+)")?;
             if let Some(captures) = regex.captures(line) {
@@ -96,7 +96,9 @@ impl Complete {
             return Ok(Some(ParserState::Assistant));
         } else if let Some(file) = line.strip_prefix("> file: ") {
             if !matches!(state, ParserState::User) {
-                return Err(anyhow!("file can only be included in user message, line={line}"));
+                return Err(exception!(
+                    message = format!("file can only be included in user message, line={line}")
+                ));
             }
 
             let pattern = self.pattern(file).await?;
@@ -129,7 +131,7 @@ impl Complete {
         Ok(None)
     }
 
-    async fn pattern(&self, pattern: &str) -> Result<String> {
+    async fn pattern(&self, pattern: &str) -> Result<String, Exception> {
         if !pattern.starts_with('/') {
             return Ok(format!(
                 "{}/{}",
@@ -145,7 +147,12 @@ impl Complete {
     }
 }
 
-async fn add_message(agent: &mut Agent, state: &ParserState, message: String, files: Vec<PathBuf>) -> Result<()> {
+async fn add_message(
+    agent: &mut Agent,
+    state: &ParserState,
+    message: String,
+    files: Vec<PathBuf>,
+) -> Result<(), Exception> {
     match state {
         ParserState::User => {
             info!("add user message: {}", message);
@@ -163,10 +170,12 @@ async fn add_message(agent: &mut Agent, state: &ParserState, message: String, fi
     Ok(())
 }
 
-fn language(extenstion: &str) -> Result<&'static str> {
+fn language(extenstion: &str) -> Result<&'static str, Exception> {
     match extenstion {
         "java" => Ok("java"),
         "rs" => Ok("rust"),
-        _ => Err(anyhow!("unsupported extension, ext={}", extenstion)),
+        _ => Err(exception!(
+            message = format!("unsupported extension, ext={}", extenstion)
+        )),
     }
 }

@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::anyhow;
-use anyhow::Context;
-use anyhow::Result;
+use framework::exception;
+use framework::exception::Exception;
 use tracing::info;
 
 use crate::chat_api::Function;
@@ -40,7 +39,7 @@ impl FunctionStore {
         }
     }
 
-    pub fn call(&self, functions: Vec<FunctionPayload>) -> Result<Vec<FunctionPayload>> {
+    pub fn call(&self, functions: Vec<FunctionPayload>) -> Result<Vec<FunctionPayload>, Exception> {
         let mut results = vec![];
         for function in functions {
             info!(
@@ -50,7 +49,7 @@ impl FunctionStore {
             let implementation = self
                 .implementations
                 .get(function.name.as_str())
-                .with_context(|| anyhow!("function not found, name={}", function.name))?;
+                .ok_or_else(|| exception!(message = format!("function not found, function={}", function.name)))?;
             let value = implementation(&function.value);
 
             results.push(FunctionPayload {
