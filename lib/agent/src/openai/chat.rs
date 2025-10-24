@@ -10,77 +10,62 @@ use framework::http::HttpMethod::POST;
 use framework::http::HttpRequest;
 use framework::json;
 use framework::json::from_json;
+use framework::task;
 use futures::Stream;
 use futures::StreamExt;
 use tokio::sync::mpsc;
+use tokio::sync::mpsc::Sender;
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::debug;
 
-use crate::api_key;
-use crate::chat_api::ChatCompletionChoice;
-use crate::chat_api::ChatRequest;
-use crate::chat_api::ChatRequestMessage;
-use crate::chat_api::ChatResponse;
-use crate::chat_api::ChatResponseMessage;
-use crate::chat_api::ChatStreamResponse;
-use crate::chat_api::FunctionCall;
-use crate::chat_api::ResponseFormat;
-use crate::chat_api::Role;
-use crate::chat_api::StreamOptions;
-use crate::chat_api::Tool;
-use crate::chat_api::ToolCall;
-use crate::chat_api::Usage;
-use crate::function::FunctionPayload;
-use crate::function::FunctionStore;
+use crate::openai::chat_api::ChatCompletionChoice;
+use crate::openai::chat_api::ChatRequest;
+use crate::openai::chat_api::ChatRequestMessage;
+use crate::openai::chat_api::ChatResponse;
+use crate::openai::chat_api::ChatResponseMessage;
+use crate::openai::chat_api::ChatStreamResponse;
+use crate::openai::chat_api::FunctionCall;
+use crate::openai::chat_api::Role;
+use crate::openai::chat_api::StreamOptions;
+use crate::openai::chat_api::Tool;
+use crate::openai::chat_api::ToolCall;
+use crate::openai::chat_api::Usage;
+use crate::openai::function::FunctionPayload;
+use crate::openai::function::FunctionStore;
+use crate::openai::session::Session;
 
 pub struct Chat {
-    http_client: HttpClient,
+    model: Arc<Model>,
     function_store: Arc<FunctionStore>,
-    pub config: ChatConfig,
+    http_client: HttpClient,
 }
 
-#[derive(Default, Debug, Clone)]
-pub struct ChatConfig {
+pub struct Model {
     url: String,
     model: String,
     api_key: String,
-
-    pub system_message: Option<String>,
-    pub top_p: Option<f32>,
-    pub temperature: Option<f32>,
-    pub response_format: Option<ResponseFormat>,
-    pub max_tokens: Option<i32>,
 }
 
 impl Chat {
-    pub fn new(url: String, api_key: String, model: String, function_store: FunctionStore) -> Self {
+    pub fn new(
+        url: String,
+        api_key: String,
+        model: String,
+        function_store: Arc<FunctionStore>,
+        http_client: HttpClient,
+    ) -> Self {
+        let model = Arc::new(Model { url, model, api_key });
         Chat {
-            http_client: HttpClient::default(),
-            config: ChatConfig {
-                url,
-                model,
-                api_key,
-                ..ChatConfig::default()
-            },
-            function_store: Arc::new(function_store),
+            model,
+            http_client,
+            function_store,
         }
     }
 
-    pub async fn generate(
-        &self,
-        messages: Arc<Mutex<Vec<ChatRequestMessage>>>,
-        prediction: Option<String>,
-    ) -> Result<String, Exception> {
-        let mut prediction_value = prediction;
-        let tools = self.function_store.definitions();
+    pub async fn generate(&self, session: Arc<Mutex<Session>>) -> Result<String, Exception> {
+        let tools = self.function_store.definitions(&session.lock().unwrap().functions);
         loop {
-            let http_request = request(
-                &self.config,
-                Arc::clone(&messages),
-                tools.clone(),
-                false,
-                prediction_value,
-            )?;
+            let http_request = openai_request(&self.model, &session, &tools, false)?;
             let http_response = self.http_client.execute(http_request).await?;
             if http_response.status != 200 {
                 return Err(exception!(
@@ -92,130 +77,138 @@ impl Chat {
                 "usage, prompt_tokens={}, completion_tokens={}",
                 response.usage.prompt_tokens, response.usage.completion_tokens
             );
-
-            let result =
-                process_chat_response(response, Arc::clone(&messages), Arc::clone(&self.function_store)).unwrap();
+            let result = process_chat_response(response, &session, &self.function_store).unwrap();
             if let Some(content) = result {
                 return Ok(content);
             }
-            prediction_value = None; // prediction only used once without function call
         }
     }
 
     pub async fn generate_stream(
         &self,
-        messages: Arc<Mutex<Vec<ChatRequestMessage>>>,
-    ) -> Result<impl Stream<Item = String>, Exception> {
+        session: Arc<Mutex<Session>>,
+    ) -> Result<impl Stream<Item = Result<String, Exception>>, Exception> {
         let (tx, rx) = mpsc::channel(64);
 
-        let tools = self.function_store.definitions();
+        let tools = self.function_store.definitions(&session.lock().unwrap().functions);
         let function_store = Arc::clone(&self.function_store);
-
         let http_client = self.http_client.clone();
-        let config = self.config.clone();
-        tokio::spawn(async move {
+
+        let model = self.model.clone();
+        task::spawn_task(async move {
             loop {
-                let http_request = request(&config, Arc::clone(&messages), tools.clone(), true, None)?;
-                let event_source = http_client.sse(http_request).await?;
-                let response = read_sse_response(event_source, &tx).await?;
-                debug!(
-                    "usage, prompt_tokens={}, completion_tokens={}",
-                    response.usage.prompt_tokens, response.usage.completion_tokens
-                );
-                let result = process_chat_response(response, Arc::clone(&messages), Arc::clone(&function_store))?;
-                if result.is_some() {
-                    return Ok::<_, Exception>(());
+                let result = process_sse(&model, &session, &tx, &tools, &function_store, &http_client).await;
+                match result {
+                    Ok(Some(_)) => return Ok(()),
+                    Ok(None) => {
+                        continue;
+                    }
+                    Err(error) => {
+                        tx.send(Err(error)).await?;
+                        return Ok(());
+                    }
                 }
             }
         });
+
         Ok(ReceiverStream::new(rx))
     }
 }
 
-fn request(
-    config: &ChatConfig,
-    messages: Arc<Mutex<Vec<ChatRequestMessage>>>,
-    tools: Option<Vec<Tool>>,
+async fn process_sse(
+    model: &Arc<Model>,
+    session: &Arc<Mutex<Session>>,
+    tx: &Sender<Result<String, Exception>>,
+    tools: &Option<Vec<Tool>>,
+    function_store: &Arc<FunctionStore>,
+    http_client: &HttpClient,
+) -> Result<Option<String>, Exception> {
+    let http_request = openai_request(model, session, tools, true)?;
+    let event_source = http_client.sse(http_request).await?;
+    let response = read_sse_response(event_source, tx).await?;
+    debug!(
+        "usage, prompt_tokens={}, completion_tokens={}",
+        response.usage.prompt_tokens, response.usage.completion_tokens
+    );
+    let result = process_chat_response(response, session, function_store)?;
+    Ok(result)
+}
+
+fn openai_request(
+    model: &Arc<Model>,
+    session: &Arc<Mutex<Session>>,
+    tools: &Option<Vec<Tool>>,
     stream: bool,
-    prediction: Option<String>,
 ) -> Result<HttpRequest, Exception> {
-    let request_messages = request_messages(messages, config);
+    let session = session.lock().unwrap();
     let request = ChatRequest {
-        model: config.model.clone(),
-        messages: request_messages,
-        temperature: config.temperature.unwrap_or(1.0),
-        top_p: config.top_p.unwrap_or(1.0),
+        model: model.model.to_string(),
+        messages: session.messages.clone(),
+        temperature: session.temperature.unwrap_or(1.0),
+        top_p: session.top_p.unwrap_or(1.0),
         stream,
         stream_options: stream.then_some(StreamOptions { include_usage: true }),
         stop: None,
-        max_completion_tokens: None,
+        max_completion_tokens: session.max_completion_tokens,
         presence_penalty: 0.0,
         frequency_penalty: 0.0,
         tool_choice: tools.is_some().then_some("auto"),
-        tools,
-        response_format: config.response_format.clone(),
-        prediction: prediction.map(|content| crate::chat_api::Prediction {
-            r#type: "content",
-            content,
-        }),
+        tools: tools.clone(),
+        response_format: session.response_format.clone(),
+        prediction: None,
     };
-    let mut http_request = HttpRequest::new(POST, &config.url);
+    let mut http_request = HttpRequest::new(POST, &model.url);
     http_request.body(json::to_json(&request)?, "application/json");
-    let api_key = api_key(&config.api_key)?;
-    http_request.headers.insert(HeaderName::from_static("api-key"), api_key);
+    http_request
+        .headers
+        .insert(HeaderName::from_static("api-key"), model.api_key.to_string());
     Ok(http_request)
 }
 
 // call function if needed, or return generated content
 fn process_chat_response(
     response: ChatResponse,
-    messages: Arc<Mutex<Vec<ChatRequestMessage>>>,
-    function_store: Arc<FunctionStore>,
+    session: &Arc<Mutex<Session>>,
+    function_store: &Arc<FunctionStore>,
 ) -> Result<Option<String>, Exception> {
-    let mut messages = messages.lock().unwrap();
+    let mut session = session.lock().unwrap();
+
     let message = response.choices.into_iter().next().unwrap();
     if let Some(calls) = message.message.tool_calls {
         let mut functions = Vec::with_capacity(calls.len());
         for call in calls.iter() {
-            functions.push(FunctionPayload {
-                id: call.id.to_string(),
-                name: call.function.name.to_string(),
-                value: json::from_json(&call.function.arguments)?,
-            })
+            let id = call.id.to_string();
+            let name = call.function.name.to_string();
+            let value = json::from_json(&call.function.arguments)?;
+            debug!(function_id = id, "[chat] function_call: {name}({value})");
+            functions.push(FunctionPayload { id, name, value })
         }
 
-        messages.push(ChatRequestMessage::new_function_call(calls));
+        session.messages.push(ChatRequestMessage::new_function_call(calls));
         let results = function_store.call(functions)?;
 
         for result in results {
-            messages.push(ChatRequestMessage::new_function_response(
-                result.id,
-                json::to_json(&result.value)?,
-            ));
+            let id = result.id;
+            let value = json::to_json(&result.value)?;
+            debug!(function_id = id, "[chat] function_result: {value}");
+            session
+                .messages
+                .push(ChatRequestMessage::new_function_response(id, value));
         }
         Ok(None)
     } else {
         let content = message.message.content.clone().unwrap();
-        messages.push(ChatRequestMessage::new_message(Role::Assistant, content.clone()));
+        debug!("[chat] assistant: {content}");
+        session
+            .messages
+            .push(ChatRequestMessage::new_message(Role::Assistant, content.clone()));
         Ok(Some(content))
-    }
-}
-
-fn request_messages(messages: Arc<Mutex<Vec<ChatRequestMessage>>>, config: &ChatConfig) -> Vec<ChatRequestMessage> {
-    let messages = messages.lock().unwrap();
-    if let Some(ref system_message) = config.system_message {
-        let mut request_messages = Vec::with_capacity(messages.len() + 1);
-        request_messages.push(ChatRequestMessage::new_message(Role::System, system_message.clone()));
-        request_messages.extend(messages.clone());
-        request_messages
-    } else {
-        messages.clone()
     }
 }
 
 async fn read_sse_response(
     mut event_source: EventSource,
-    tx: &mpsc::Sender<String>,
+    tx: &Sender<Result<String, Exception>>,
 ) -> Result<ChatResponse, Exception> {
     let mut response = ChatResponse {
         choices: vec![ChatCompletionChoice {
@@ -234,6 +227,10 @@ async fn read_sse_response(
 
     while let Some(event) = event_source.next().await {
         let event = event?;
+
+        if event.data == "[DONE]" {
+            break;
+        }
 
         let stream_response: ChatStreamResponse = json::from_json(&event.data)?;
 
@@ -267,14 +264,14 @@ async fn read_sse_response(
                 tool_call.function.arguments.push_str(&stream_call.function.arguments);
             } else if let Some(content) = stream_choice.delta.content {
                 choice.append_content(&content);
-                tx.send(content).await?;
+                tx.send(Ok(content)).await?;
             }
 
             if let Some(finish_reason) = stream_choice.finish_reason {
                 choice.finish_reason = finish_reason;
                 if choice.finish_reason == "stop" {
                     // chatgpt doesn't return '\n' at end of message
-                    tx.send("\n".to_string()).await?;
+                    tx.send(Ok("\n".to_string())).await?;
                 }
             }
         }

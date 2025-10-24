@@ -1,3 +1,9 @@
+use std::fs;
+use std::path::PathBuf;
+
+use base64::Engine;
+use base64::prelude::BASE64_STANDARD;
+use framework::exception::Exception;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -44,11 +50,42 @@ pub struct Content {
     pub text: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image_url: Option<ImageUrl>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file: Option<File>,
+}
+
+impl Content {
+    fn image(url: String) -> Self {
+        Content {
+            r#type: "image_url",
+            text: None,
+            image_url: Some(ImageUrl { url }),
+            file: None,
+        }
+    }
+
+    fn file(path: PathBuf) -> Result<Self, Exception> {
+        Ok(Content {
+            r#type: "file",
+            text: None,
+            image_url: None,
+            file: Some(File {
+                filename: path.file_name().unwrap().to_string_lossy().to_string(),
+                file_data: BASE64_STANDARD.encode(fs::read(&path)?),
+            }),
+        })
+    }
 }
 
 #[derive(Debug, Serialize, Clone)]
 pub struct ImageUrl {
-    pub url: String,
+    pub url: String, // Either a URL of the image or the base64 encoded image data.
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct File {
+    pub filename: String,
+    pub file_data: String, // The base64 encoded file data, used when passing the file to the model as a string.
 }
 
 #[derive(Debug, Serialize)]
@@ -104,10 +141,33 @@ impl ChatRequestMessage {
                 r#type: "text",
                 text: Some(message),
                 image_url: None,
+                file: None,
             }]),
             tool_call_id: None,
             tool_calls: None,
         }
+    }
+
+    pub fn new_user_images(urls: Vec<String>) -> Self {
+        ChatRequestMessage {
+            role: Role::User,
+            content: Some(urls.into_iter().map(Content::image).collect()),
+            tool_call_id: None,
+            tool_calls: None,
+        }
+    }
+
+    pub fn new_user_files(files: Vec<PathBuf>) -> Result<Self, Exception> {
+        let contents = files
+            .into_iter()
+            .map(Content::file)
+            .collect::<Result<Vec<Content>, Exception>>()?;
+        Ok(ChatRequestMessage {
+            role: Role::User,
+            content: Some(contents),
+            tool_call_id: None,
+            tool_calls: None,
+        })
     }
 
     pub fn new_user_message(message: String, image_urls: Vec<String>) -> Self {
@@ -116,12 +176,14 @@ impl ChatRequestMessage {
             r#type: "text",
             text: Some(message),
             image_url: None,
+            file: None,
         });
         for url in image_urls {
             content.push(Content {
                 r#type: "image_url",
                 text: None,
                 image_url: Some(ImageUrl { url }),
+                file: None,
             });
         }
         ChatRequestMessage {
@@ -132,13 +194,14 @@ impl ChatRequestMessage {
         }
     }
 
-    pub fn new_function_response(id: String, result: String) -> Self {
+    pub fn new_function_response(id: String, value: String) -> Self {
         ChatRequestMessage {
             role: Role::Tool,
             content: Some(vec![Content {
                 r#type: "text",
-                text: Some(result),
+                text: Some(value),
                 image_url: None,
+                file: None,
             }]),
             tool_call_id: Some(id),
             tool_calls: None,

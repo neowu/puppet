@@ -1,24 +1,25 @@
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use agent::agent::Agent;
-use agent::function::FunctionRegistry;
+use agent::openai::chat::Chat;
+use agent::openai::chat_api::Function;
+use agent::openai::function::FunctionStore;
 use framework::exception::Exception;
-use openai::chat_api::Function;
 use rand::Rng;
 use serde_json::json;
 
-pub fn load(path: Option<&Path>) -> Result<Agent, Exception> {
-    let default_config_path = format!("{}/.config/puppet/agent.json", env!("HOME"));
-    let path = path.unwrap_or(Path::new(&default_config_path));
-    let registry = load_function_registry()?;
-    let agent = Agent::load(path, &registry)?;
+pub struct TestStruct {}
+
+pub fn load(path: &Path) -> Result<HashMap<String, Chat>, Exception> {
+    let store = create_function_store()?;
+    let agent = agent::load(path, store)?;
     Ok(agent)
 }
 
-fn load_function_registry() -> Result<FunctionRegistry, Exception> {
-    let mut registry = FunctionRegistry::default();
-    registry.add(
+fn create_function_store() -> Result<FunctionStore, Exception> {
+    let mut store = FunctionStore::default();
+    store.add(
         Function {
             name: "get_random_number",
             description: "generate random number",
@@ -43,7 +44,7 @@ fn load_function_registry() -> Result<FunctionRegistry, Exception> {
             })
         }),
     );
-    registry.add(
+    store.add(
         Function {
             name: "close_door",
             description: "close door of home",
@@ -55,5 +56,5 @@ fn load_function_registry() -> Result<FunctionRegistry, Exception> {
             })
         }),
     );
-    Ok(registry)
+    Ok(store)
 }

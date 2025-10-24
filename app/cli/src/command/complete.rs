@@ -3,20 +3,21 @@ use std::io::stdout;
 use std::mem;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::Mutex;
 
-use ::agent::agent::Agent;
+use ::agent::openai::session::Message;
+use ::agent::openai::session::Session;
 use clap::Args;
 use framework::exception;
 use framework::exception::Exception;
-use framework::fs::path::PathExt;
-use futures::StreamExt;
 use glob::glob;
 use regex::Regex;
 use tokio::fs;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::io::BufReader;
-use tracing::info;
+use tokio_stream::StreamExt;
 
 use crate::agent;
 
@@ -26,116 +27,148 @@ pub struct Complete {
     prompt: PathBuf,
 
     #[arg(long, help = "conf path")]
-    conf: Option<PathBuf>,
-}
-
-enum ParserState {
-    User,
-    Assistant,
+    conf: PathBuf,
 }
 
 impl Complete {
     pub async fn execute(&self) -> Result<(), Exception> {
-        let mut agent = agent::load(self.conf.as_deref())?;
+        let chats = agent::load(&self.conf)?;
 
         let prompt = fs::OpenOptions::new().read(true).open(&self.prompt).await?;
         let reader = BufReader::new(prompt);
         let mut lines = reader.lines();
 
-        let mut files: Vec<PathBuf> = vec![];
-        let mut message = String::new();
-        let mut agent_name: Option<String> = None;
-        let mut state = ParserState::User;
+        let mut session = Session::default();
+        let mut parser = Parser::new(&mut session, &self.prompt);
 
         while let Some(line) = lines.next_line().await? {
             if line.is_empty() {
                 continue;
             }
-            state = self
-                .process_line(&state, &line, &mut agent, &mut message, &mut files, &mut agent_name)
-                .await?
-                .unwrap_or(state);
+            parser.process_line(&line).await?;
         }
-        add_message(&mut agent, &state, message, files).await?;
-
-        if !matches!(state, ParserState::User) {
+        parser.add_message()?;
+        if !matches!(parser.state, ParserState::User) {
             return Err(exception!(message = "last message must be user message"));
         }
 
-        let mut stream = agent.chat(None).await?;
+        let chat = chats
+            .get(&parser.model.unwrap_or("gpt5".to_string()))
+            .ok_or_else(|| exception!(message = ""))?;
+
+        let session = Arc::new(Mutex::new(session));
+        let mut stream = chat.generate_stream(session).await?;
         let mut prompt = fs::OpenOptions::new().append(true).open(&self.prompt).await?;
-        prompt
-            .write_all(format!("\n# assistant @{}\n\n", agent_name.unwrap_or("main".to_string())).as_bytes())
-            .await?;
+        prompt.write_all("\n# assistant\n\n".as_bytes()).await?;
         while let Some(text) = stream.next().await {
+            let text = text?;
             print!("{text}");
             stdout().flush()?;
             prompt.write_all(text.as_bytes()).await?;
         }
         Ok(())
     }
+}
 
-    async fn process_line(
-        &self,
-        state: &ParserState,
-        line: &str,
-        agent: &mut Agent,
-        message: &mut String,
-        files: &mut Vec<PathBuf>,
-        agent_name: &mut Option<String>,
-    ) -> Result<Option<ParserState>, Exception> {
-        if line.starts_with("# user") {
-            let regex = Regex::new(r"@(\w+)")?;
-            if let Some(captures) = regex.captures(line) {
-                *agent_name = Some(captures[1].to_string());
-            }
-            add_message(agent, state, mem::take(message), mem::take(files)).await?;
-            return Ok(Some(ParserState::User));
-        } else if line.starts_with("# assistant") {
-            add_message(agent, state, mem::take(message), vec![]).await?;
-            return Ok(Some(ParserState::Assistant));
-        } else if let Some(file) = line.strip_prefix("> file: ") {
-            if !matches!(state, ParserState::User) {
-                return Err(exception!(
-                    message = format!("file can only be included in user message, line={line}")
-                ));
-            }
+struct Parser<'a> {
+    state: ParserState,
+    current_message: String,
+    model: Option<String>,
+    session: &'a mut Session,
+    current_path: &'a Path,
+}
 
-            let pattern = self.pattern(file).await?;
-            info!("include files, pattern: {pattern}");
-            for entry in glob(&pattern)? {
-                let path = entry?;
-                let extension = path.file_extension()?;
-                match extension {
-                    "txt" | "md" => {
-                        message.push_str(&fs::read_to_string(path).await?);
-                    }
-                    "java" | "rs" => {
-                        message.push_str(&format!(
-                            "```{} (path: {})\n",
-                            language(extension)?,
-                            path.to_string_lossy()
-                        ));
-                        message.push_str(&fs::read_to_string(path).await?);
-                        message.push_str("```\n");
-                    }
-                    _ => {
-                        files.push(path);
-                    }
-                }
-            }
-        } else {
-            message.push_str(line);
-            message.push('\n');
+enum ParserState {
+    System,
+    User,
+    Assistant,
+}
+
+impl<'a> Parser<'a> {
+    fn new(session: &'a mut Session, current_path: &'a Path) -> Self {
+        Self {
+            state: ParserState::User,
+            current_message: String::new(),
+            model: None,
+            session,
+            current_path,
         }
-        Ok(None)
+    }
+
+    async fn process_line(&mut self, line: &str) -> Result<(), Exception> {
+        if line.starts_with("# system") {
+            self.add_message()?;
+
+            let regex = Regex::new(r#"model=([^,]+)"#)?;
+            if let Some(captures) = regex.captures(line) {
+                let model = captures[1].to_string();
+                self.model = Some(model);
+            }
+            let regex = Regex::new(r#"top_p=([^,]+)"#)?;
+            if let Some(captures) = regex.captures(line) {
+                let top_p = captures[1].parse()?;
+                self.session.top_p = Some(top_p);
+            }
+
+            self.state = ParserState::System;
+        } else if line.starts_with("# user") {
+            self.add_message()?;
+
+            self.state = ParserState::User;
+        } else if line.starts_with("> ![@img]") {
+            self.add_message()?;
+
+            let regex = Regex::new(r#"> ![@img]=\((.*)\)"#)?;
+            if let Some(captures) = regex.captures(line) {
+                let mut images = vec![];
+                let pattern = self.pattern(&captures[1]).await?;
+                for entry in glob(&pattern)? {
+                    let path = entry?;
+                    images.push(path);
+                }
+                self.session.add_message(Message::Images(images))?;
+            }
+        } else if line.starts_with("> [@file]") {
+            self.add_message()?;
+
+            let regex = Regex::new(r#"> [@file]=\((.*)\)"#)?;
+            if let Some(captures) = regex.captures(line) {
+                let mut files = vec![];
+                let pattern = self.pattern(&captures[1]).await?;
+                for entry in glob(&pattern)? {
+                    let path = entry?;
+                    files.push(path);
+                }
+                self.session.add_message(Message::Files(files))?;
+            }
+        } else if line.starts_with("# assistant") {
+            self.add_message()?;
+
+            self.state = ParserState::Assistant;
+        } else {
+            self.current_message.push_str(line);
+            self.current_message.push('\n');
+        }
+        Ok(())
+    }
+
+    fn add_message(&mut self) -> Result<(), Exception> {
+        let message = mem::take(&mut self.current_message);
+        if !message.is_empty() {
+            match self.state {
+                ParserState::System => self.session.add_message(Message::SystemMessage(message)),
+                ParserState::User => self.session.add_message(Message::UserMessage(message)),
+                ParserState::Assistant => self.session.add_message(Message::AssistantMessage(message)),
+            }?;
+        }
+        Ok(())
     }
 
     async fn pattern(&self, pattern: &str) -> Result<String, Exception> {
         if !pattern.starts_with('/') {
             return Ok(format!(
                 "{}/{}",
-                fs::canonicalize(&self.prompt)
+                fs::canonicalize(&self.current_path)
                     .await?
                     .parent()
                     .unwrap()
@@ -144,38 +177,5 @@ impl Complete {
             ));
         }
         Ok(pattern.to_string())
-    }
-}
-
-async fn add_message(
-    agent: &mut Agent,
-    state: &ParserState,
-    message: String,
-    files: Vec<PathBuf>,
-) -> Result<(), Exception> {
-    match state {
-        ParserState::User => {
-            info!("add user message: {}", message);
-            let files: Vec<&Path> = files.iter().map(|p| p.as_path()).collect();
-            for file in files.iter() {
-                info!("add user data: {}", file.to_string_lossy());
-            }
-            agent.add_user_message(message, files)?;
-        }
-        ParserState::Assistant => {
-            info!("add assistent message: {}", message);
-            agent.add_assistant_message(message);
-        }
-    }
-    Ok(())
-}
-
-fn language(extenstion: &str) -> Result<&'static str, Exception> {
-    match extenstion {
-        "java" => Ok("java"),
-        "rs" => Ok("rust"),
-        _ => Err(exception!(
-            message = format!("unsupported extension, ext={}", extenstion)
-        )),
     }
 }
